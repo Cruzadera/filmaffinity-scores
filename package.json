@@ -1,22 +1,28 @@
 {
   "name": "filmaffinity-scores",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "API para obtener y cachear puntuaciones de FilmAffinity, integrable con Jellyfin y Jellyseer.",
+  "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "update-cache": "node src/scripts/updateCache.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "filmaffinity",
+    "jellyfin",
+    "jellyseer",
+    "api",
+    "puppeteer",
+    "scraper"
+  ],
+  "author": "María",
   "license": "ISC",
   "dependencies": {
-    "axios": "^1.13.2",
-    "cheerio": "^1.1.2",
-    "cloudscraper": "^4.6.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "node-cache": "^5.1.2",
+    "node-fetch": "^3.3.2",
     "puppeteer": "^24.29.1",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2"

@@ -9,21 +9,21 @@
 
 ---
 
-## 🧩 Características
 
-- 🔍 **Búsqueda por título** directamente en FilmAffinity.  
-- ⭐ Devuelve **puntuación media, votos y año de estreno**.  
-- ⚡ **Cache automático** configurable (por defecto 24 h).  
-- 🐳 Preparado para **Docker / Docker Compose**.  
-- 🛠️ Desarrollado en **Node.js + Express + Cheerio** (sin dependencias nativas).  
-- 🔒 Código abierto, mantenible y listo para extender con claves API o base de datos local.
+## 🚀 Características
+
+- ✅ Scraping estable mediante **Puppeteer + Stealth Plugin**
+- 💾 Cache local en `data/ratings.json` generada a diario
+- ⚙️ Endpoint REST `/rating?title=...`
+- 🧠 Cache en memoria (NodeCache) + persistente en disco
+- 🔗 Integración directa con la **API de Jellyfin**
+- 🕓 Cron automático para mantener los datos actualizados
 
 ---
 
-## 📦 Instalación local (modo desarrollo)
+## 📦 Instalación
 
 ```bash
-git clone https://github.com/<tu_usuario>/filmaffinity-scores.git
+git clone https://github.com/Cruzadera/filmaffinity-scores.git
 cd filmaffinity-scores
 npm install
-npm start
