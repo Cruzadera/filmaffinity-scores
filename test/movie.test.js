@@ -138,3 +138,56 @@ test("GET /movie returns FilmAffinity data for valid input", async (t) => {
   const cacheContent = JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
   assert.deepEqual(cacheContent["alien::1979"], expectedPayload);
 });
+
+test("GET /movie returns 404 when the scraper finds no results", async (t) => {
+  restoreCacheFile();
+
+  const app = loadApp(async (title, year) => {
+    assert.equal(title, "Unknown Movie");
+    assert.equal(year, "2099");
+    return null;
+  });
+  const { server, baseUrl } = await startServer(app);
+
+  t.after(() => {
+    server.close();
+    restoreCacheFile();
+  });
+
+  const response = await fetch(`${baseUrl}/movie?title=Unknown%20Movie&year=2099`);
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), {
+    error: "No result found",
+  });
+});
+
+test("scoreSearchCandidate prioritizes the exact title and requested year", () => {
+  delete require.cache[servicePath];
+  const { scoreSearchCandidate } = require(servicePath);
+
+  const exactMatch = {
+    href: "/es/film123.html",
+    titleText: "Alien",
+    contextText: "Alien 1979 Ridley Scott",
+  };
+  const wrongYear = {
+    href: "/es/film456.html",
+    titleText: "Alien",
+    contextText: "Alien 2003 Director's Cut",
+  };
+  const partialMatch = {
+    href: "/es/film789.html",
+    titleText: "Aliens",
+    contextText: "Aliens 1986 James Cameron",
+  };
+
+  assert.ok(
+    scoreSearchCandidate(exactMatch, "Alien", "1979") >
+      scoreSearchCandidate(wrongYear, "Alien", "1979")
+  );
+  assert.ok(
+    scoreSearchCandidate(exactMatch, "Alien", "1979") >
+      scoreSearchCandidate(partialMatch, "Alien", "1979")
+  );
+});
