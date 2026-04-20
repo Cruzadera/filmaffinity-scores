@@ -18,7 +18,11 @@ const PORT = process.env.PORT || 8085;
 const CACHE_FILE = path.join(__dirname, "../data/ratings.json");
 
 function normalizeTitle(title) {
-  return String(title || "").trim();
+  return String(title || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
 function normalizeYear(year) {
@@ -142,4 +146,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, buildCacheKey, validateMovieQuery };
+module.exports = { app, buildCacheKey, normalizeTitle, validateMovieQuery };

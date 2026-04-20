@@ -119,7 +119,7 @@ test("GET /movie returns FilmAffinity data for valid input", async (t) => {
   };
 
   const app = loadApp(async (title, year) => {
-    assert.equal(title, "Alien");
+    assert.equal(title, "alien");
     assert.equal(year, "1979");
     return expectedPayload;
   });
@@ -139,11 +139,43 @@ test("GET /movie returns FilmAffinity data for valid input", async (t) => {
   assert.deepEqual(cacheContent["alien::1979"], expectedPayload);
 });
 
+test("GET /movie normalizes title input before matching", async (t) => {
+  restoreCacheFile();
+
+  const expectedPayload = {
+    title: "Amelie",
+    year: "2001",
+    rating: 7.8,
+    votes: "654321",
+    url: "https://www.filmaffinity.com/es/film654321.html",
+  };
+
+  const app = loadApp(async (title, year) => {
+    assert.equal(title, "amelie");
+    assert.equal(year, "2001");
+    return expectedPayload;
+  });
+  const { server, baseUrl } = await startServer(app);
+
+  t.after(() => {
+    server.close();
+    restoreCacheFile();
+  });
+
+  const response = await fetch(`${baseUrl}/movie?title=%20%20Am%C3%A9lie%20%20&year=2001`);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), expectedPayload);
+
+  const cacheContent = JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
+  assert.deepEqual(cacheContent["amelie::2001"], expectedPayload);
+});
+
 test("GET /movie returns 404 when the scraper finds no results", async (t) => {
   restoreCacheFile();
 
   const app = loadApp(async (title, year) => {
-    assert.equal(title, "Unknown Movie");
+    assert.equal(title, "unknown movie");
     assert.equal(year, "2099");
     return null;
   });
@@ -190,4 +222,11 @@ test("scoreSearchCandidate prioritizes the exact title and requested year", () =
     scoreSearchCandidate(exactMatch, "Alien", "1979") >
       scoreSearchCandidate(partialMatch, "Alien", "1979")
   );
+});
+
+test("normalizeSearchText lowercases, removes accents and trims spaces", () => {
+  delete require.cache[servicePath];
+  const { normalizeSearchText } = require(servicePath);
+
+  assert.equal(normalizeSearchText("  Amélie  "), "amelie");
 });
