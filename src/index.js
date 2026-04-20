@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const dotenv = require("dotenv");
 const NodeCache = require("node-cache");
-const { getFilmAffinityRating } = require("./services/filmaffinity");
+const { getFilmAffinityRating, ScraperError } = require("./services/filmaffinity");
 dotenv.config();
 
 const app = express();
@@ -117,7 +117,10 @@ async function handleRatingRequest(req, res, { requireYear = false } = {}) {
     console.log(`Stored in cache: ${title}${year ? ` (${year})` : ""} (${data.rating})`);
     return res.json(data);
   } catch (err) {
-    console.error("Error fetching rating:", err.message);
+    console.error("Error fetching rating:", err && err.message ? err.message : err);
+    if (err && (err.name === "ScraperError" || err instanceof ScraperError)) {
+      return res.status(502).json({ error: "Scraper error", message: err.message });
+    }
     return res.status(500).json({ error: "Internal server error" });
   }
 }

@@ -194,6 +194,31 @@ test("GET /movie returns 404 when the scraper finds no results", async (t) => {
   });
 });
 
+test("GET /movie returns 502 when the scraper errors", async (t) => {
+  restoreCacheFile();
+
+  const app = loadApp(async (title, year) => {
+    assert.equal(title, "some title");
+    assert.equal(year, "2000");
+    const err = new Error("timeout while scraping");
+    err.name = "ScraperError";
+    throw err;
+  });
+  const { server, baseUrl } = await startServer(app);
+
+  t.after(() => {
+    server.close();
+    restoreCacheFile();
+  });
+
+  const response = await fetch(`${baseUrl}/movie?title=Some%20Title&year=2000`);
+
+  assert.equal(response.status, 502);
+  const json = await response.json();
+  assert.equal(json.error, "Scraper error");
+  assert.ok(json.message && json.message.includes("timeout"));
+});
+
 test("scoreSearchCandidate prioritizes the exact title and requested year", () => {
   delete require.cache[servicePath];
   const { scoreSearchCandidate } = require(servicePath);
