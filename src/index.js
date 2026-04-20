@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const dotenv = require("dotenv");
 const NodeCache = require("node-cache");
-const { getFilmAffinityRating, ScraperError } = require("./services/filmaffinity");
+const { getFilmAffinityRating, ScraperError } = require("./scraper/filmaffinity");
 dotenv.config();
 
 const app = express();
