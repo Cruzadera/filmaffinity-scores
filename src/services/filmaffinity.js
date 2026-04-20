@@ -4,7 +4,15 @@ puppeteer.use(StealthPlugin());
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function getFilmAffinityRating(title) {
+function matchesRequestedYear(candidateText, requestedYear) {
+  if (!requestedYear) {
+    return true;
+  }
+
+  return candidateText.includes(String(requestedYear));
+}
+
+async function getFilmAffinityRating(title, year) {
   const encodedTitle = encodeURIComponent(title.trim());
   const searchUrl = `https://www.filmaffinity.com/es/search.php?stext=${encodedTitle}&stype=title`;
 
@@ -41,28 +49,49 @@ async function getFilmAffinityRating(title) {
       await sleep(15000);
     }
 
-    // Possible selectors for the first matching result
-    const selectors = [
-      "div.row.movie-card div.fs-6.mc-title a",
-      "div.mc-title a",
-      "ul.fa-list-group li a",
-      "a[href^='/es/film']",
-    ];
+    const filmLink = await page.evaluate((requestedYear) => {
+      const anchors = Array.from(document.querySelectorAll("a[href^='/es/film']"));
+      const seen = new Set();
+      const candidates = [];
 
-    let filmLink = null;
-    for (const sel of selectors) {
-      try {
-        await page.waitForSelector(sel, { timeout: 15000 });
-        filmLink = await page.$eval(sel, (el) => el.getAttribute("href"));
-        if (filmLink) {
-          console.log(`Valid selector found: ${sel}`);
-          break;
+      for (const anchor of anchors) {
+        const href = anchor.getAttribute("href");
+        if (!href || seen.has(href)) {
+          continue;
         }
-      } catch (_) {}
-    }
+
+        seen.add(href);
+
+        const container =
+          anchor.closest(".movie-card") ||
+          anchor.closest(".fa-shadow") ||
+          anchor.closest("li") ||
+          anchor.parentElement;
+        const contextText = (container?.textContent || anchor.textContent || "")
+          .replace(/\s+/g, " ")
+          .trim();
+
+        candidates.push({ href, contextText });
+      }
+
+      if (!candidates.length) {
+        return null;
+      }
+
+      if (requestedYear) {
+        const exactYearMatch = candidates.find((candidate) =>
+          candidate.contextText.includes(String(requestedYear))
+        );
+        if (exactYearMatch) {
+          return exactYearMatch.href;
+        }
+      }
+
+      return candidates[0].href;
+    }, year);
 
     if (!filmLink) {
-      console.warn(`No result found for "${title}"`);
+      console.warn(`No result found for "${title}"${year ? ` (${year})` : ""}`);
       await page.screenshot({ path: `debug-${encodedTitle}.png`, fullPage: true });
       await browser.close();
       return null;
@@ -134,6 +163,11 @@ async function getFilmAffinityRating(title) {
 
     if (!data || !data.rating) {
       console.warn(`"${title}" was found but no rating is available`);
+      return null;
+    }
+
+    if (year && data.year && !matchesRequestedYear(String(data.year), String(year))) {
+      console.warn(`Result year mismatch for "${title}": expected ${year}, got ${data.year}`);
       return null;
     }
 
