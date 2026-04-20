@@ -4,12 +4,46 @@ puppeteer.use(StealthPlugin());
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+function normalizeSearchText(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 function matchesRequestedYear(candidateText, requestedYear) {
   if (!requestedYear) {
     return true;
   }
 
   return candidateText.includes(String(requestedYear));
+}
+
+function scoreSearchCandidate(candidate, requestedTitle, requestedYear) {
+  const normalizedRequestedTitle = normalizeSearchText(requestedTitle);
+  const normalizedCandidateTitle = normalizeSearchText(candidate.titleText);
+  const normalizedContext = normalizeSearchText(candidate.contextText);
+  let score = 0;
+
+  if (normalizedCandidateTitle === normalizedRequestedTitle) {
+    score += 100;
+  } else if (normalizedCandidateTitle.includes(normalizedRequestedTitle)) {
+    score += 60;
+  } else if (normalizedContext.includes(normalizedRequestedTitle)) {
+    score += 30;
+  }
+
+  if (requestedYear && matchesRequestedYear(candidate.contextText, requestedYear)) {
+    score += 40;
+  }
+
+  if (candidate.href.includes("/film")) {
+    score += 5;
+  }
+
+  return score;
 }
 
 async function getFilmAffinityRating(title, year) {
@@ -49,7 +83,7 @@ async function getFilmAffinityRating(title, year) {
       await sleep(15000);
     }
 
-    const filmLink = await page.evaluate((requestedYear) => {
+    const filmLink = await page.evaluate((requestedTitle, requestedYear) => {
       const anchors = Array.from(document.querySelectorAll("a[href^='/es/film']"));
       const seen = new Set();
       const candidates = [];
@@ -70,36 +104,39 @@ async function getFilmAffinityRating(title, year) {
         const contextText = (container?.textContent || anchor.textContent || "")
           .replace(/\s+/g, " ")
           .trim();
+        const titleText = (anchor.textContent || "").replace(/\s+/g, " ").trim();
 
-        candidates.push({ href, contextText });
+        candidates.push({ href, titleText, contextText });
       }
 
-      if (!candidates.length) {
-        return null;
-      }
+      return candidates;
+    }, title, year);
 
-      if (requestedYear) {
-        const exactYearMatch = candidates.find((candidate) =>
-          candidate.contextText.includes(String(requestedYear))
-        );
-        if (exactYearMatch) {
-          return exactYearMatch.href;
-        }
-      }
+    const bestCandidate = Array.isArray(filmLink)
+      ? filmLink
+          .map((candidate) => ({
+            ...candidate,
+            score: scoreSearchCandidate(candidate, title, year),
+          }))
+          .sort((left, right) => right.score - left.score)[0]
+      : null;
 
-      return candidates[0].href;
-    }, year);
+    if (bestCandidate && bestCandidate.score > 0) {
+      console.log(
+        `Matched search result: ${bestCandidate.titleText || bestCandidate.href}${year ? ` (${year})` : ""}`
+      );
+    }
 
-    if (!filmLink) {
+    if (!bestCandidate?.href) {
       console.warn(`No result found for "${title}"${year ? ` (${year})` : ""}`);
       await page.screenshot({ path: `debug-${encodedTitle}.png`, fullPage: true });
       await browser.close();
       return null;
     }
 
-    const filmUrl = filmLink.startsWith("http")
-      ? filmLink
-      : `https://www.filmaffinity.com${filmLink}`;
+    const filmUrl = bestCandidate.href.startsWith("http")
+      ? bestCandidate.href
+      : `https://www.filmaffinity.com${bestCandidate.href}`;
 
     // 2. Open the movie detail page
     console.log(`Opening: ${filmUrl}`);
@@ -148,7 +185,14 @@ async function getFilmAffinityRating(title, year) {
         "";
       const votes = votesStr.replace(/\D/g, "") || null;
 
-      const yearMatch = (document.body.innerText.match(/\b(19|20)\d{2}\b/) || [])[0] || null;
+      const yearStr =
+        getTxt(".fa-year") ||
+        getTxt('dd[itemprop="datePublished"]') ||
+        getAttr('meta[itemprop="datePublished"]', "content") ||
+        "";
+      const yearMatch = (yearStr.match(/\b(19|20)\d{2}\b/) || [])[0] ||
+        (document.body.innerText.match(/\b(19|20)\d{2}\b/) || [])[0] ||
+        null;
 
       return {
         title,
@@ -182,4 +226,8 @@ async function getFilmAffinityRating(title, year) {
   }
 }
 
-module.exports = { getFilmAffinityRating };
+module.exports = {
+  getFilmAffinityRating,
+  normalizeSearchText,
+  scoreSearchCandidate,
+};
