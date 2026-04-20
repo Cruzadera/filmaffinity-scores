@@ -47,7 +47,8 @@ function scoreSearchCandidate(candidate, requestedTitle, requestedYear) {
 }
 
 async function getFilmAffinityRating(title, year) {
-  const encodedTitle = encodeURIComponent(title.trim());
+  const normalizedTitle = normalizeSearchText(title);
+  const encodedTitle = encodeURIComponent(normalizedTitle);
   const searchUrl = `https://www.filmaffinity.com/es/search.php?stext=${encodedTitle}&stype=title`;
 
   let browser;
@@ -73,7 +74,7 @@ async function getFilmAffinityRating(title, year) {
     );
 
     // 1. Search for the movie
-    console.log(`Searching for: ${title}`);
+    console.log(`Searching for: ${normalizedTitle}`);
     await page.goto(searchUrl, { waitUntil: "networkidle2", timeout: 90000 });
 
     // Give the stealth plugin time to react if Cloudflare blocks the page
