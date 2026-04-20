@@ -30,18 +30,18 @@ async function getFilmAffinityRating(title) {
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
     );
 
-    // 1️⃣ Buscar película
-    console.log(`🔎 Buscando: ${title}`);
+    // 1. Search for the movie
+    console.log(`Searching for: ${title}`);
     await page.goto(searchUrl, { waitUntil: "networkidle2", timeout: 90000 });
 
-    // Si Cloudflare bloquea, da tiempo a que el plugin actúe
+    // Give the stealth plugin time to react if Cloudflare blocks the page
     const pageTitle = await page.title();
     if (pageTitle.includes("Verifique que usted es un ser humano")) {
-      console.log("⚠️ Cloudflare challenge detectado, esperando 15s...");
+      console.log("Cloudflare challenge detected, waiting 15s...");
       await sleep(15000);
     }
 
-    // Selectores posibles del primer resultado
+    // Possible selectors for the first matching result
     const selectors = [
       "div.row.movie-card div.fs-6.mc-title a",
       "div.mc-title a",
@@ -55,14 +55,14 @@ async function getFilmAffinityRating(title) {
         await page.waitForSelector(sel, { timeout: 15000 });
         filmLink = await page.$eval(sel, (el) => el.getAttribute("href"));
         if (filmLink) {
-          console.log(`✅ Selector válido: ${sel}`);
+          console.log(`Valid selector found: ${sel}`);
           break;
         }
       } catch (_) {}
     }
 
     if (!filmLink) {
-      console.warn(`⚠️ No se encontró resultado para "${title}"`);
+      console.warn(`No result found for "${title}"`);
       await page.screenshot({ path: `debug-${encodedTitle}.png`, fullPage: true });
       await browser.close();
       return null;
@@ -72,11 +72,11 @@ async function getFilmAffinityRating(title) {
       ? filmLink
       : `https://www.filmaffinity.com${filmLink}`;
 
-    // 2️⃣ Ficha de detalle
-    console.log(`🎬 Accediendo a: ${filmUrl}`);
+    // 2. Open the movie detail page
+    console.log(`Opening: ${filmUrl}`);
     await page.goto(filmUrl, { waitUntil: "domcontentloaded", timeout: 90000 });
 
-    // Esperar hasta 30 s a que aparezca la nota
+    // Wait up to 30s for the rating to appear
     let ratingReady = false;
     for (let i = 0; i < 15; i++) {
       ratingReady = await page.evaluate(() => {
@@ -94,11 +94,11 @@ async function getFilmAffinityRating(title) {
     }
 
     if (!ratingReady) {
-      console.warn(`⚠️ No apareció la nota tras esperar 30 s`);
+      console.warn("Rating did not appear after waiting 30s");
       await page.screenshot({ path: `debug-${encodedTitle}-timeout.png`, fullPage: true });
     }
 
-    // 3️⃣ Extraer datos
+    // 3. Extract data
     const data = await page.evaluate(() => {
       const getTxt = (sel) => document.querySelector(sel)?.textContent?.trim() || "";
       const getAttr = (sel, attr) => document.querySelector(sel)?.getAttribute(attr) || "";
@@ -133,14 +133,16 @@ async function getFilmAffinityRating(title) {
     await browser.close();
 
     if (!data || !data.rating) {
-      console.warn(`⚠️ "${title}" encontrado pero sin nota disponible`);
+      console.warn(`"${title}" was found but no rating is available`);
       return null;
     }
 
-    console.log(`✅ ${data.title} (${data.year}) → ${data.rating} (${data.votes || "?"} votos)`);
+    console.log(
+      `Retrieved rating: ${data.title} (${data.year}) -> ${data.rating} (${data.votes || "?"} votes)`
+    );
     return data;
   } catch (err) {
-    console.error("❌ Error scraping FilmAffinity:", err.message);
+    console.error("Error scraping FilmAffinity:", err.message);
     if (browser) await browser.close().catch(() => {});
     return null;
   }
