@@ -46,6 +46,14 @@ function scoreSearchCandidate(candidate, requestedTitle, requestedYear) {
   return score;
 }
 
+class ScraperError extends Error {
+  constructor(message, cause) {
+    super(message);
+    this.name = "ScraperError";
+    if (cause) this.cause = cause;
+  }
+}
+
 async function getFilmAffinityRating(title, year) {
   const normalizedTitle = normalizeSearchText(title);
   const encodedTitle = encodeURIComponent(normalizedTitle);
@@ -221,9 +229,9 @@ async function getFilmAffinityRating(title, year) {
     );
     return data;
   } catch (err) {
-    console.error("Error scraping FilmAffinity:", err.message);
+    console.error("Error scraping FilmAffinity:", err && err.message ? err.message : err);
     if (browser) await browser.close().catch(() => {});
-    return null;
+    throw new ScraperError("Failed to scrape FilmAffinity", err);
   }
 }
 
@@ -231,4 +239,5 @@ module.exports = {
   getFilmAffinityRating,
   normalizeSearchText,
   scoreSearchCandidate,
+  ScraperError,
 };
