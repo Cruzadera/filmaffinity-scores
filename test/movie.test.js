@@ -7,7 +7,7 @@ const { after, test } = require("node:test");
 const repoRoot = path.join(__dirname, "..");
 const cacheFile = path.join(repoRoot, "data", "ratings.json");
 const indexPath = path.join(repoRoot, "src", "index.js");
-const servicePath = path.join(repoRoot, "src", "services", "filmaffinity.js");
+const scraperPath = path.join(repoRoot, "src", "scraper", "filmaffinity.js");
 
 const originalCacheExists = fs.existsSync(cacheFile);
 const originalCacheContent = originalCacheExists ? fs.readFileSync(cacheFile, "utf-8") : null;
@@ -26,11 +26,11 @@ function restoreCacheFile() {
 
 function loadApp(mockGetFilmAffinityRating) {
   delete require.cache[indexPath];
-  delete require.cache[servicePath];
+  delete require.cache[scraperPath];
 
-  require.cache[servicePath] = {
-    id: servicePath,
-    filename: servicePath,
+  require.cache[scraperPath] = {
+    id: scraperPath,
+    filename: scraperPath,
     loaded: true,
     exports: {
       getFilmAffinityRating: mockGetFilmAffinityRating,
@@ -56,7 +56,7 @@ function startServer(app) {
 after(() => {
   restoreCacheFile();
   delete require.cache[indexPath];
-  delete require.cache[servicePath];
+  delete require.cache[scraperPath];
 });
 
 test('GET /movie returns 400 when "title" is missing', async (t) => {
@@ -220,8 +220,8 @@ test("GET /movie returns 502 when the scraper errors", async (t) => {
 });
 
 test("scoreSearchCandidate prioritizes the exact title and requested year", () => {
-  delete require.cache[servicePath];
-  const { scoreSearchCandidate } = require(servicePath);
+  delete require.cache[scraperPath];
+  const { scoreSearchCandidate } = require(scraperPath);
 
   const exactMatch = {
     href: "/es/film123.html",
@@ -250,8 +250,8 @@ test("scoreSearchCandidate prioritizes the exact title and requested year", () =
 });
 
 test("normalizeSearchText lowercases, removes accents and trims spaces", () => {
-  delete require.cache[servicePath];
-  const { normalizeSearchText } = require(servicePath);
+  delete require.cache[scraperPath];
+  const { normalizeSearchText } = require(scraperPath);
 
   assert.equal(normalizeSearchText("  Amélie  "), "amelie");
 });
