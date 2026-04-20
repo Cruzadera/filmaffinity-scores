@@ -14,7 +14,7 @@
 
 - ✅ Scraping estable mediante **Puppeteer + Stealth Plugin**
 - 💾 Cache local en `data/ratings.json` generada a diario
-- ⚙️ Endpoint REST `/rating?title=...`
+- ⚙️ Endpoint REST `/movie?title=...&year=...`
 - 🧠 Cache en memoria (NodeCache) + persistente en disco
 - 🔗 Integración directa con la **API de Jellyfin**
 - 🕓 Cron automático para mantener los datos actualizados

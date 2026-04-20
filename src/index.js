@@ -3,12 +3,13 @@ const fs = require("fs");
 const path = require("path");
 const dotenv = require("dotenv");
 const NodeCache = require("node-cache");
-const { getFilmAffinityRating } = require("./services/filmaffinity");
+const { getFilmAffinityRating, ScraperError } = require("./scraper/filmaffinity");
+const logger = require("./logging");
 dotenv.config();
 
 const app = express();
 
-// TTL de la cache en memoria (por defecto 1 día)
+// In-memory cache TTL (defaults to 1 day)
 const cache = new NodeCache({
   stdTTL: parseInt(process.env.CACHE_TTL || "86400"),
   checkperiod: 120,
@@ -17,80 +18,136 @@ const cache = new NodeCache({
 const PORT = process.env.PORT || 8085;
 const CACHE_FILE = path.join(__dirname, "../data/ratings.json");
 
-// Middleware de logs
+function normalizeTitle(title) {
+  return String(title || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function normalizeYear(year) {
+  return String(year || "").trim();
+}
+
+function buildCacheKey(title, year) {
+  const normalizedTitle = normalizeTitle(title).toLowerCase();
+  const normalizedYear = normalizeYear(year);
+  return normalizedYear ? `${normalizedTitle}::${normalizedYear}` : normalizedTitle;
+}
+
+function readLocalCache() {
+  if (!fs.existsSync(CACHE_FILE)) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(fs.readFileSync(CACHE_FILE, "utf-8"));
+  } catch (err) {
+    console.error("Error reading local cache:", err.message);
+    return {};
+  }
+}
+
+function writeLocalCache(cacheData) {
+  fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
+  fs.writeFileSync(CACHE_FILE, JSON.stringify(cacheData, null, 2), "utf-8");
+}
+
+function validateMovieQuery(query, requireYear = false) {
+  const title = normalizeTitle(query.title);
+  const year = normalizeYear(query.year);
+
+  if (!title) {
+    return { error: 'Missing "title" query parameter' };
+  }
+
+  if (requireYear && !year) {
+    return { error: 'Missing "year" query parameter' };
+  }
+
+  if (year && !/^\d{4}$/.test(year)) {
+    return { error: '"year" query parameter must be a 4-digit year' };
+  }
+
+  return { title, year };
+}
+
+async function handleRatingRequest(req, res, { requireYear = false } = {}) {
+  const validation = validateMovieQuery(req.query, requireYear);
+  if (validation.error) {
+    return res.status(400).json({ error: validation.error });
+  }
+
+  const { title, year } = validation;
+  const cacheKey = buildCacheKey(title, year);
+  const legacyCacheKey = buildCacheKey(title);
+
+  if (cache.has(cacheKey)) {
+    logger.info(`In-memory cache hit: ${title}${year ? ` (${year})` : ""}`);
+    return res.json(cache.get(cacheKey));
+  }
+
+  const localCache = readLocalCache();
+  const cachedEntry = localCache[cacheKey];
+  const legacyEntry = !year ? null : localCache[legacyCacheKey];
+  const cacheHit =
+    cachedEntry ||
+    (legacyEntry && (!legacyEntry.year || String(legacyEntry.year) === year) ? legacyEntry : null);
+
+  if (cacheHit) {
+    logger.info(`File cache hit: ${title}${year ? ` (${year})` : ""}`);
+    cache.set(cacheKey, cacheHit);
+    return res.json(cacheHit);
+  }
+
+  logger.info(`Fetching FilmAffinity rating for: ${title}${year ? ` (${year})` : ""}`);
+
+  try {
+    const data = await getFilmAffinityRating(title, year);
+
+    if (!data || !data.rating) {
+      logger.warn(`No result found for "${title}"${year ? ` (${year})` : ""}`);
+      return res.status(404).json({ error: "No result found" });
+    }
+
+    cache.set(cacheKey, data);
+    localCache[cacheKey] = data;
+    writeLocalCache(localCache);
+
+    logger.info(`Stored in cache: ${title}${year ? ` (${year})` : ""} (${data.rating})`);
+    return res.json(data);
+  } catch (err) {
+    logger.error("Error fetching rating:", err && err.message ? err.message : err);
+    if (err && (err.name === "ScraperError" || err instanceof ScraperError)) {
+      return res.status(502).json({ error: "Scraper error", message: err.message });
+    }
+    return res.status(500).json({ error: "Internal server error" });
+  }
+}
+
+// Request logging middleware
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  logger.info(`${req.method} ${req.url}`);
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   next();
 });
 
-// Endpoint principal
-app.get("/rating", async (req, res) => {
-  const { title } = req.query;
-  if (!title)
-    return res.status(400).json({ error: 'Missing "title" query parameter' });
+app.get("/movie", (req, res) => handleRatingRequest(req, res, { requireYear: true }));
 
-  const cacheKey = title.toLowerCase();
+app.get("/rating", (req, res) => handleRatingRequest(req, res));
 
-  // 1️⃣ Revisa primero la cache en memoria
-  if (cache.has(cacheKey)) {
-    console.log(`🧠 Cache (RAM) hit: ${title}`);
-    return res.json(cache.get(cacheKey));
-  }
-
-  // 2️⃣ Luego revisa el archivo local (JSON generado por cron)
-  if (fs.existsSync(CACHE_FILE)) {
-    try {
-      const jsonData = JSON.parse(fs.readFileSync(CACHE_FILE, "utf-8"));
-      if (jsonData[cacheKey]) {
-        console.log(`💾 Cache (file) hit: ${title}`);
-        cache.set(cacheKey, jsonData[cacheKey]); // guarda también en RAM
-        return res.json(jsonData[cacheKey]);
-      }
-    } catch (err) {
-      console.error("❌ Error leyendo cache local:", err.message);
-    }
-  }
-
-  // 3️⃣ Si no está cacheado, realiza el scraping directamente (fallback)
-  console.log(`🌐 Fetching FilmAffinity rating for: ${title}`);
-  try {
-    const data = await getFilmAffinityRating(title);
-
-    if (!data || !data.rating) {
-      console.warn(`⚠️ No se encontró resultado para "${title}"`);
-      return res.status(404).json({ error: "No result found" });
-    }
-
-    // guarda en cache en memoria
-    cache.set(cacheKey, data);
-
-    // actualiza también el JSON local
-    let currentCache = {};
-    if (fs.existsSync(CACHE_FILE)) {
-      try {
-        currentCache = JSON.parse(fs.readFileSync(CACHE_FILE, "utf-8"));
-      } catch {}
-    }
-    currentCache[cacheKey] = data;
-    fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(currentCache, null, 2), "utf-8");
-
-    console.log(`✅ Guardado en cache: ${title} (${data.rating})`);
-    res.json(data);
-  } catch (err) {
-    console.error("❌ Error fetching rating:", err.message);
-    res.status(500).json({ error: "Internal server error" });
-  }
-});
-
-// Endpoint de estado
+// Health endpoint
 app.get("/health", (req, res) =>
   res.json({ status: "ok", cacheTTL: cache.options.stdTTL })
 );
 
-// Arranque del servidor
-app.listen(PORT, () => {
-  console.log(`🚀 FilmAffinity Scores API running on port ${PORT}`);
-  console.log(`🧊 Cache TTL: ${cache.options.stdTTL}s`);
-});
+// Server startup
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`FilmAffinity Scores API running on port ${PORT}`);
+    console.log(`Cache TTL: ${cache.options.stdTTL}s`);
+  });
+}
+
+module.exports = { app, buildCacheKey, normalizeTitle, validateMovieQuery };
