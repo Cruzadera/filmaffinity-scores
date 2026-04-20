@@ -4,6 +4,7 @@ const path = require("path");
 const dotenv = require("dotenv");
 const NodeCache = require("node-cache");
 const { getFilmAffinityRating, ScraperError } = require("./scraper/filmaffinity");
+const logger = require("./logging");
 dotenv.config();
 
 const app = express();
@@ -83,7 +84,7 @@ async function handleRatingRequest(req, res, { requireYear = false } = {}) {
   const legacyCacheKey = buildCacheKey(title);
 
   if (cache.has(cacheKey)) {
-    console.log(`In-memory cache hit: ${title}${year ? ` (${year})` : ""}`);
+    logger.info(`In-memory cache hit: ${title}${year ? ` (${year})` : ""}`);
     return res.json(cache.get(cacheKey));
   }
 
@@ -95,18 +96,18 @@ async function handleRatingRequest(req, res, { requireYear = false } = {}) {
     (legacyEntry && (!legacyEntry.year || String(legacyEntry.year) === year) ? legacyEntry : null);
 
   if (cacheHit) {
-    console.log(`File cache hit: ${title}${year ? ` (${year})` : ""}`);
+    logger.info(`File cache hit: ${title}${year ? ` (${year})` : ""}`);
     cache.set(cacheKey, cacheHit);
     return res.json(cacheHit);
   }
 
-  console.log(`Fetching FilmAffinity rating for: ${title}${year ? ` (${year})` : ""}`);
+  logger.info(`Fetching FilmAffinity rating for: ${title}${year ? ` (${year})` : ""}`);
 
   try {
     const data = await getFilmAffinityRating(title, year);
 
     if (!data || !data.rating) {
-      console.warn(`No result found for "${title}"${year ? ` (${year})` : ""}`);
+      logger.warn(`No result found for "${title}"${year ? ` (${year})` : ""}`);
       return res.status(404).json({ error: "No result found" });
     }
 
@@ -114,10 +115,10 @@ async function handleRatingRequest(req, res, { requireYear = false } = {}) {
     localCache[cacheKey] = data;
     writeLocalCache(localCache);
 
-    console.log(`Stored in cache: ${title}${year ? ` (${year})` : ""} (${data.rating})`);
+    logger.info(`Stored in cache: ${title}${year ? ` (${year})` : ""} (${data.rating})`);
     return res.json(data);
   } catch (err) {
-    console.error("Error fetching rating:", err && err.message ? err.message : err);
+    logger.error("Error fetching rating:", err && err.message ? err.message : err);
     if (err && (err.name === "ScraperError" || err instanceof ScraperError)) {
       return res.status(502).json({ error: "Scraper error", message: err.message });
     }
@@ -127,7 +128,7 @@ async function handleRatingRequest(req, res, { requireYear = false } = {}) {
 
 // Request logging middleware
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  logger.info(`${req.method} ${req.url}`);
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   next();
 });
