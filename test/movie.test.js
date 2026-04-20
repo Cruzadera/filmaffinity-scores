@@ -1,0 +1,140 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const http = require("node:http");
+const path = require("node:path");
+const { after, test } = require("node:test");
+
+const repoRoot = path.join(__dirname, "..");
+const cacheFile = path.join(repoRoot, "data", "ratings.json");
+const indexPath = path.join(repoRoot, "src", "index.js");
+const servicePath = path.join(repoRoot, "src", "services", "filmaffinity.js");
+
+const originalCacheExists = fs.existsSync(cacheFile);
+const originalCacheContent = originalCacheExists ? fs.readFileSync(cacheFile, "utf-8") : null;
+
+function restoreCacheFile() {
+  if (originalCacheExists) {
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+    fs.writeFileSync(cacheFile, originalCacheContent, "utf-8");
+    return;
+  }
+
+  if (fs.existsSync(cacheFile)) {
+    fs.unlinkSync(cacheFile);
+  }
+}
+
+function loadApp(mockGetFilmAffinityRating) {
+  delete require.cache[indexPath];
+  delete require.cache[servicePath];
+
+  require.cache[servicePath] = {
+    id: servicePath,
+    filename: servicePath,
+    loaded: true,
+    exports: {
+      getFilmAffinityRating: mockGetFilmAffinityRating,
+    },
+  };
+
+  return require(indexPath).app;
+}
+
+function startServer(app) {
+  return new Promise((resolve) => {
+    const server = http.createServer(app);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address();
+      resolve({
+        server,
+        baseUrl: `http://127.0.0.1:${port}`,
+      });
+    });
+  });
+}
+
+after(() => {
+  restoreCacheFile();
+  delete require.cache[indexPath];
+  delete require.cache[servicePath];
+});
+
+test('GET /movie returns 400 when "title" is missing', async (t) => {
+  const app = loadApp(async () => {
+    throw new Error("The scraper should not be called for invalid input");
+  });
+  const { server, baseUrl } = await startServer(app);
+
+  t.after(() => server.close());
+
+  const response = await fetch(`${baseUrl}/movie?year=1999`);
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: 'Missing "title" query parameter',
+  });
+});
+
+test('GET /movie returns 400 when "year" is missing', async (t) => {
+  const app = loadApp(async () => {
+    throw new Error("The scraper should not be called for invalid input");
+  });
+  const { server, baseUrl } = await startServer(app);
+
+  t.after(() => server.close());
+
+  const response = await fetch(`${baseUrl}/movie?title=Alien`);
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: 'Missing "year" query parameter',
+  });
+});
+
+test('GET /movie returns 400 when "year" is invalid', async (t) => {
+  const app = loadApp(async () => {
+    throw new Error("The scraper should not be called for invalid input");
+  });
+  const { server, baseUrl } = await startServer(app);
+
+  t.after(() => server.close());
+
+  const response = await fetch(`${baseUrl}/movie?title=Alien&year=99`);
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: '"year" query parameter must be a 4-digit year',
+  });
+});
+
+test("GET /movie returns FilmAffinity data for valid input", async (t) => {
+  restoreCacheFile();
+
+  const expectedPayload = {
+    title: "Alien",
+    year: "1979",
+    rating: 8.1,
+    votes: "123456",
+    url: "https://www.filmaffinity.com/es/film123456.html",
+  };
+
+  const app = loadApp(async (title, year) => {
+    assert.equal(title, "Alien");
+    assert.equal(year, "1979");
+    return expectedPayload;
+  });
+  const { server, baseUrl } = await startServer(app);
+
+  t.after(() => {
+    server.close();
+    restoreCacheFile();
+  });
+
+  const response = await fetch(`${baseUrl}/movie?title=Alien&year=1979`);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), expectedPayload);
+
+  const cacheContent = JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
+  assert.deepEqual(cacheContent["alien::1979"], expectedPayload);
+});
