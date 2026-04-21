@@ -89,13 +89,11 @@ See [DOCKER.md](DOCKER.md) for build and run instructions using Docker and Docke
 
 **Published image**
 
-Official images are published to GitHub Container Registry at `ghcr.io/Cruzadera/filmaffinity-scores` by CI. To pull:
+Official images are published to GitHub Container Registry at `ghcr.io/cruzadera/filmaffinity-scores` by CI. To pull:
 
 ```bash
-docker pull ghcr.io/Cruzadera/filmaffinity-scores:latest
+docker pull ghcr.io/cruzadera/filmaffinity-scores:latest
 ```
-
-Replace `Cruzadera` with the GitHub user or organization that hosts the repository.
 
 ---
 
