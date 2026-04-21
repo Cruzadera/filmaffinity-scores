@@ -1,0 +1,14 @@
+version: "3.8"
+
+services:
+  app:
+    build:
+      context: .
+    env_file:
+      - .env
+    ports:
+      - "${PORT:-8085}:8085"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    shm_size: '1gb'
