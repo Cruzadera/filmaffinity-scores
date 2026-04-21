@@ -23,7 +23,7 @@ Environment variables reference
 
 - `PORT` : port in container and host mapping (default `8085`).
 - `CACHE_TTL` : cache TTL seconds (default `86400`).
-- `JELLYFIN_URL`: your jellyfin url.
+- `JELLYFIN_BASIC_URL`: your jellyfin url.
 - `JELLYFIN_API_KEY`: your jellyfin api key.
 - `PUPPETEER_EXECUTABLE_PATH` : optional — set only if you want to use a system-installed Chromium.
 - `DEBUG_SCREENSHOTS` : set to `true` to persist debug screenshots under the `data/` folder inside the container (disabled by default).
