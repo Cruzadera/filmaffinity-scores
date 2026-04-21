@@ -37,14 +37,14 @@ jobs:
         id: meta
         run: |
           IMAGE_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-          echo "image=ghcr.io/${IMAGE_OWNER}/filmaffinity-scores" >> "$GITHUB_OUTPUT"
+          IMAGE="ghcr.io/${IMAGE_OWNER}/filmaffinity-scores"
           TAGS="${IMAGE}:latest ${IMAGE}:${{ github.sha }}"
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG_NAME=${GITHUB_REF#refs/tags/}
             TAGS="${TAGS} ${IMAGE}:${TAG_NAME}"
           fi
-          echo "image=${IMAGE}" >> $GITHUB_OUTPUT
-          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push
         uses: docker/build-push-action@v4
