@@ -87,6 +87,16 @@ curl "http://localhost:3000/movie?title=Inception&year=2010"
 
 See [DOCKER.md](DOCKER.md) for build and run instructions using Docker and Docker Compose.
 
+**Published image**
+
+Official images are published to GitHub Container Registry at `ghcr.io/Cruzadera/filmaffinity-scores` by CI. To pull:
+
+```bash
+docker pull ghcr.io/Cruzadera/filmaffinity-scores:latest
+```
+
+Replace `Cruzadera` with the GitHub user or organization that hosts the repository.
+
 ---
 
 ## 🔗 Integrations
