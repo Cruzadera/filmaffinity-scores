@@ -111,6 +111,57 @@ Future integrations may include:
 
 ---
 
+## 🔌 Jellyfin integration (client)
+
+This project includes a reusable Jellyfin API client at [src/services/jellyfinClient.js](src/services/jellyfinClient.js). The client is configurable via constructor options or environment variables and supports both API key header auth and query-based `ApiKey` authentication.
+
+- File: [src/services/jellyfinClient.js](src/services/jellyfinClient.js)
+
+Environment variables (or pass as options):
+
+- `JELLYFIN_BASE_URL`: base URL of your Jellyfin server (e.g. `http://192.168.1.31:8096`)
+- `JELLYFIN_API_KEY`: Jellyfin API key
+- `JELLYFIN_TIMEOUT`: request timeout in milliseconds (optional)
+- `JELLYFIN_AUTH_MODE`: authentication mode (`auto`|`header`|`query`) — default is `auto`
+
+Auth behaviour:
+
+- `auto` (default): the client sends the recommended `Authorization: MediaBrowser Token="..."` header and will retry once using the `ApiKey` query parameter if the server responds `401`.
+- `header`: always use the `Authorization: MediaBrowser ...` header.
+- `query`: always use the `ApiKey` query parameter and do not send the header.
+
+Basic usage example (prefer query mode for API key-only setups):
+
+```javascript
+const JellyfinClient = require('./src/services/jellyfinClient');
+
+const client = new JellyfinClient({
+  baseUrl: process.env.JELLYFIN_BASE_URL,
+  apiKey: process.env.JELLYFIN_API_KEY,
+  authMode: 'query', // 'auto' | 'header' | 'query'
+});
+
+async function demo() {
+  const users = await client.getUsers();
+  console.log('Users:', users);
+
+  const items = await client.getItems({ Limit: 10 });
+  console.log('Items:', items);
+}
+
+demo().catch(console.error);
+```
+
+Testing
+
+Set `JELLYFIN_BASE_URL` and `JELLYFIN_API_KEY` in your `.env` and run:
+
+```bash
+npm test
+```
+
+---
+
 ## ⚠️ Disclaimer
 
 This project uses web scraping to retrieve data from Filmaffinity.
