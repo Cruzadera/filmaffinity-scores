@@ -14,12 +14,15 @@ async function* fetchMoviesIterator(clientOrOpts = {}, opts = {}) {
   }
 
   const pageSize = opts.pageSize || 100;
-  const includeFields = opts.fields || 'ProviderIds,ProductionYear';
+  // Request OriginalTitle so we can prefer it when searching external sources
+  const includeFields = opts.fields || 'ProviderIds,ProductionYear,OriginalTitle';
+  // Allow caller to specify IncludeItemTypes (Movie, Series, Episode, etc.)
+  const includeItemTypes = opts.includeItemTypes || 'Movie';
 
   let startIndex = 0;
   while (true) {
     const params = {
-      IncludeItemTypes: 'Movie',
+      IncludeItemTypes: includeItemTypes,
       Recursive: 'true',
       Fields: includeFields,
       StartIndex: startIndex,
@@ -33,6 +36,7 @@ async function* fetchMoviesIterator(clientOrOpts = {}, opts = {}) {
       yield {
         id: it.Id || it.Id || it.id,
         name: it.Name || it.Name || it.Title || null,
+        originalTitle: it.OriginalTitle || it.OriginalTitle || null,
         productionYear: it.ProductionYear || it.ProductionYear || null,
         providerIds: it.ProviderIds || it.ProviderIds || null,
         raw: it,
