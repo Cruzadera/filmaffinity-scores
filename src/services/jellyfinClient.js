@@ -12,6 +12,7 @@ Usage:
 */
 
 const DEFAULT_TIMEOUT = 10000;
+const jellyfinConfig = require('../config/jellyfin');
 
 function getFetch() {
   if (typeof fetch !== 'undefined') return fetch;
@@ -27,11 +28,20 @@ function getFetch() {
 class JellyfinClient {
   constructor(options = {}) {
     const { baseUrl, apiKey, timeout } = options;
-    this.baseUrl = (baseUrl || process.env.JELLYFIN_BASE_URL || 'http://localhost:8096').replace(/\/+$/,'');
-    this.apiKey = apiKey || process.env.JELLYFIN_API_KEY || null;
-    // authMode: 'auto' (try header then ApiKey), 'header' (use Authorization header), 'query' (use ApiKey query param)
-    this.authMode = options.authMode || process.env.JELLYFIN_AUTH_MODE || 'auto';
-    this.timeout = parseInt(timeout || process.env.JELLYFIN_TIMEOUT || DEFAULT_TIMEOUT, 10);
+
+    // Prefer explicit constructor options, otherwise load from centralized config and validate
+    if (baseUrl || apiKey) {
+      this.baseUrl = (baseUrl || process.env.JELLYFIN_BASE_URL || 'http://localhost:8096').replace(/\/+$/,'');
+      this.apiKey = apiKey || process.env.JELLYFIN_API_KEY || null;
+      this.authMode = options.authMode || process.env.JELLYFIN_AUTH_MODE || 'auto';
+      this.timeout = parseInt(timeout || process.env.JELLYFIN_TIMEOUT || DEFAULT_TIMEOUT, 10);
+    } else {
+      const cfg = jellyfinConfig.getConfig({ strict: true });
+      this.baseUrl = cfg.baseUrl;
+      this.apiKey = cfg.apiKey;
+      this.authMode = cfg.authMode || process.env.JELLYFIN_AUTH_MODE || 'auto';
+      this.timeout = parseInt(timeout || cfg.timeout || DEFAULT_TIMEOUT, 10);
+    }
     this._fetch = getFetch();
   }
 
