@@ -162,17 +162,37 @@ Run the updater (by default it runs in dry-run mode):
 npm run update-jellyfin
 ```
 
-Environment variables used by the updater:
+Environment variables used by the updater and the newer `sync-jellyfin` script:
 
-- `UPDATE_JELLYFIN_DRY_RUN`: `true`/`false` — when `true` (default) the script will only show the payload it would send to Jellyfin and will not perform updates.
-- `UPDATE_JELLYFIN_SET_CRITIC`: `true`/`false` — when `true` the updater will also set the `CriticRating` field (optional) if available from FilmAffinity.
-- `UPDATE_JELLYFIN_FORCE`: `true`/`false` — when `true` the updater will skip fetching existing metadata and forcibly apply updates.
-- `UPDATE_JELLYFIN_PAGE_SIZE`: integer — page size used when iterating movies (default `50`).
+- `UPDATE_JELLYFIN_DRY_RUN` / `SYNC_JELLYFIN_DRY_RUN`: `true`/`false` — when `true` the script will only show the payload it would send to Jellyfin and will not perform updates. Default: `true`.
+- `UPDATE_JELLYFIN_SET_CRITIC` / `SYNC_JELLYFIN_SET_CRITIC`: `true`/`false` — when `true` the updater will also set the `CriticRating` field (optional) if available from FilmAffinity. Default: `false`.
+- `UPDATE_JELLYFIN_FORCE` / `SYNC_JELLYFIN_FORCE`: `true`/`false` — when `true` the updater will skip fetching existing metadata and forcibly apply updates. Default: `false`.
+- `UPDATE_JELLYFIN_PAGE_SIZE` / `SYNC_JELLYFIN_PAGE_SIZE`: integer — page size used when iterating items (default `50` for updater, `100` for sync script).
+- `SYNC_JELLYFIN_LIMIT`: integer — maximum number of items to process (useful for testing). Default: no limit.
+- `SYNC_JELLYFIN_BATCH_SIZE`: integer — number of concurrent tasks per batch (default `5`).
+- `SYNC_JELLYFIN_DELAY_MS`: integer — milliseconds to wait between batches (default `500`).
+- `SYNC_JELLYFIN_RETRIES`: integer — number of retries for transient operations (default `3`).
+- `SYNC_JELLYFIN_RETRY_DELAY`: integer — base retry delay in milliseconds for exponential backoff (default `1000`).
+- `SYNC_JELLYFIN_INCLUDE_ITEM_TYPES`: comma-separated list — include item types to iterate, e.g. `Movie,Series,Episode` (default `Movie`).
 
-Example (apply real updates):
+Examples
+
+Dry-run (show payloads, do not apply updates):
 
 ```bash
-UPDATE_JELLYFIN_DRY_RUN=false UPDATE_JELLYFIN_SET_CRITIC=false npm run update-jellyfin
+LOG_LEVEL=debug SYNC_JELLYFIN_DRY_RUN=true node scripts/sync-jellyfin.js --limit=1 --batch-size=1 --page-size=1
+```
+
+Apply real updates (be careful):
+
+```bash
+LOG_LEVEL=debug SYNC_JELLYFIN_DRY_RUN=false node scripts/sync-jellyfin.js --limit=1 --batch-size=1 --page-size=1
+```
+
+Sync only Series example:
+
+```bash
+node scripts/sync-jellyfin.js --include-item-types=Series --limit=10
 ```
 
 Testing

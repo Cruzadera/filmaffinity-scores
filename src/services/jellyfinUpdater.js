@@ -49,17 +49,31 @@ async function updateMovieMetadata(clientOrOpts, itemId, faData, options = {}) {
   const mapped = mapRatingToJellyfin(faData);
   if (!mapped) return { updated: false, reason: 'invalid-rating' };
 
-  // fetch existing item metadata to avoid unnecessary overwrites
+  const logger = require('../logging');
+
+  // Jellyfin POST /Items/{id} requires the FULL item object, not a partial update.
+  // Fetch the complete item via /Items?Ids= (GET /Items/{id} alone requires userId and returns 400).
   let existing = null;
-  if (!force) {
-    try {
-      existing = await client.get(`/Items/${encodeURIComponent(itemId)}`);
-    } catch (err) {
-      // if fetching fails, proceed conservatively
-      existing = null;
+  try {
+    const res = await client.getItems({
+      Ids: itemId,
+      Fields: 'SortName,OriginalTitle,Genres,Tags,Studios,People,Overview,CommunityRating,CriticRating,OfficialRating,PremiereDate,ProductionYear,ProviderIds,ExternalUrls,Taglines,DateCreated',
+      Recursive: 'true',
+    });
+    existing = res && res.Items && res.Items[0] ? res.Items[0] : null;
+  } catch (err) {
+    existing = null;
+  }
+
+  if (!force && existing) {
+    const needsCommunity = shouldUpdate(existing.CommunityRating, mapped.CommunityRating);
+    const needsCritic = setCritic && mapped.CriticRating !== undefined && shouldUpdate(existing.CriticRating, mapped.CriticRating);
+    if (!needsCommunity && !needsCritic) {
+      return { updated: false, reason: 'no-change' };
     }
   }
 
+  // Build the updates preview (for dryRun and logging)
   const updates = {};
   if (shouldUpdate(existing?.CommunityRating, mapped.CommunityRating)) {
     updates.CommunityRating = mapped.CommunityRating;
@@ -78,9 +92,20 @@ async function updateMovieMetadata(clientOrOpts, itemId, faData, options = {}) {
     return { updated: false, dryRun: true, payload: updates };
   }
 
-  // perform update: Jellyfin accepts POST /Items/{id} with updated fields
-  const res = await client.postItem(itemId, updates);
-  return { updated: true, response: res };
+  // Merge updates into full item body — Jellyfin requires the complete object
+  const fullBody = Object.assign({}, existing || {}, updates);
+  logger.debug(`Updating item ${itemId} with payload: ${JSON.stringify(updates)}`);
+  try {
+    const res = await client.postItem(itemId, fullBody);
+    return { updated: true, response: res };
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    const body = err && err.body ? err.body : null;
+    const e = new Error(`Failed to update item ${itemId}: ${msg}`);
+    e.body = body;
+    e.payload = updates;
+    throw e;
+  }
 }
 
 module.exports = {

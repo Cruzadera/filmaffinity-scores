@@ -92,7 +92,6 @@ async function getFilmAffinityRating(title, year) {
     // Try to accept cookie/privacy banners that block search results (click ACEPTO / Aceptar / Accept)
     try {
       const clicked = await page.evaluate(() => {
-        // search for elements likely to be cookie accept buttons and click the first matching one
         const nodes = Array.from(document.querySelectorAll('button, a, input, div, span'));
         const re = /(acepto|aceptar|accept|i agree)/i;
         for (const el of nodes) {
@@ -109,7 +108,7 @@ async function getFilmAffinityRating(title, year) {
       });
       if (clicked) {
         logger.info("Cookie/banner accept clicked on search page");
-        await page.waitForTimeout(1200);
+        await sleep(1200);
       }
     } catch (e) {
       logger.debug && logger.debug("Cookie click attempt failed", e && e.message ? e.message : e);
@@ -129,7 +128,7 @@ async function getFilmAffinityRating(title, year) {
           });
         });
       });
-      await page.waitForTimeout(300);
+      await sleep(300);
     } catch (e) {
       logger.debug && logger.debug("Overlay cleanup failed", e && e.message ? e.message : e);
     }
@@ -141,30 +140,34 @@ async function getFilmAffinityRating(title, year) {
       await sleep(15000);
     }
 
-    try { await page.waitForSelector("a[href*='/film'], a[href*='/movie']", { timeout: 3000 }); } catch (e) {}
+    try { await page.waitForSelector('a[href]', { timeout: 3000 }); } catch (e) {}
 
     const filmLink = await page.evaluate((requestedTitle, requestedYear) => {
-      const anchors = Array.from(document.querySelectorAll("a[href*='/film'], a[href*='/movie']"));
+      const anchors = Array.from(document.querySelectorAll('a[href]'));
       const seen = new Set();
       const candidates = [];
 
+      const filmRe = /film\d+\.html/i;
       for (const anchor of anchors) {
-        const href = anchor.getAttribute("href");
-        if (!href || seen.has(href)) {
-          continue;
-        }
-
+        const href = anchor.getAttribute('href');
+        if (!href || seen.has(href)) continue;
+        // keep only FilmAffinity film pages (e.g. /es/film774513.html or https://www.filmaffinity.com/es/film774513.html)
+        const isRelative = href.startsWith('/');
+        const isFAHost = href.includes('filmaffinity.com');
+        const isFilmPage = filmRe.test(href);
+        if (!isFilmPage) continue;
+        if (!isFAHost && !isRelative) continue;
         seen.add(href);
 
         const container =
-          anchor.closest(".movie-card") ||
-          anchor.closest(".fa-shadow") ||
-          anchor.closest("li") ||
+          anchor.closest('.movie-card') ||
+          anchor.closest('.fa-shadow') ||
+          anchor.closest('li') ||
           anchor.parentElement;
-        const contextText = (container?.textContent || anchor.textContent || "")
-          .replace(/\s+/g, " ")
+        const contextText = (container?.textContent || anchor.textContent || '')
+          .replace(/\s+/g, ' ')
           .trim();
-        const titleText = (anchor.textContent || "").replace(/\s+/g, " ").trim();
+        const titleText = (anchor.textContent || '').replace(/\s+/g, ' ').trim();
 
         candidates.push({ href, titleText, contextText });
       }
@@ -180,6 +183,31 @@ async function getFilmAffinityRating(title, year) {
           }))
           .sort((left, right) => right.score - left.score)[0]
       : null;
+
+    // If we have a good match (title + year), use it. Otherwise try a fallback:
+    // Re-score by title only and then filter the top candidates by year in their context.
+    if (!(bestCandidate && bestCandidate.score > 0)) {
+      if (Array.isArray(filmLink) && filmLink.length > 0) {
+        const rescored = filmLink
+          .map((candidate) => ({
+            ...candidate,
+            score: scoreSearchCandidate(candidate, title, null),
+          }))
+          .sort((a, b) => b.score - a.score);
+
+        if (year) {
+          const byYear = rescored.filter((c) => matchesRequestedYear(c.contextText, year));
+          if (byYear.length > 0) {
+            // pick highest title-score among those matching the year
+            const pick = byYear.sort((a, b) => b.score - a.score)[0];
+            if (pick) {
+              logger.info(`Fallback matched by title then filtered by year: ${pick.titleText || pick.href}${year ? ` (${year})` : ''}`);
+              bestCandidate = pick; // eslint-disable-line no-param-reassign
+            }
+          }
+        }
+      }
+    }
 
     if (bestCandidate && bestCandidate.score > 0) {
       logger.info(
