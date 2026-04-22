@@ -152,6 +152,29 @@ async function demo() {
 demo().catch(console.error);
 ```
 
+## 🔁 Update Jellyfin metadata from FilmAffinity
+
+This project includes a helper script to update Jellyfin movie metadata with ratings retrieved from FilmAffinity. The script iterates your Jellyfin movie library, queries FilmAffinity for ratings and updates the Jellyfin item fields when necessary.
+
+Run the updater (by default it runs in dry-run mode):
+
+```bash
+npm run update-jellyfin
+```
+
+Environment variables used by the updater:
+
+- `UPDATE_JELLYFIN_DRY_RUN`: `true`/`false` — when `true` (default) the script will only show the payload it would send to Jellyfin and will not perform updates.
+- `UPDATE_JELLYFIN_SET_CRITIC`: `true`/`false` — when `true` the updater will also set the `CriticRating` field (optional) if available from FilmAffinity.
+- `UPDATE_JELLYFIN_FORCE`: `true`/`false` — when `true` the updater will skip fetching existing metadata and forcibly apply updates.
+- `UPDATE_JELLYFIN_PAGE_SIZE`: integer — page size used when iterating movies (default `50`).
+
+Example (apply real updates):
+
+```bash
+UPDATE_JELLYFIN_DRY_RUN=false UPDATE_JELLYFIN_SET_CRITIC=false npm run update-jellyfin
+```
+
 Testing
 
 Set `JELLYFIN_BASE_URL` and `JELLYFIN_API_KEY` in your `.env` and run:
