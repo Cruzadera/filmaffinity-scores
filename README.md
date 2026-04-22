@@ -95,6 +95,23 @@ Official images are published to GitHub Container Registry at `ghcr.io/cruzadera
 docker pull ghcr.io/cruzadera/filmaffinity-scores:latest
 ```
 
+## ⏰ Scheduler service
+
+The `docker-compose.yml` includes a `scheduler` service that performs an initial full library cache population by running `node src/scripts/updateCache.js` on startup, then runs the same update once per day. The scheduler shares the `./data` volume so the generated `data/ratings.json` is persisted and available to the API container.
+
+You can control the interval with the `SLEEP_SECONDS` environment variable (default `86400` seconds = 24h). To run the scheduler with Docker Compose:
+
+```bash
+docker compose up -d scheduler
+```
+
+Or start the full stack (API + scheduler):
+
+```bash
+docker compose up -d
+```
+
+
 ---
 
 ## 🔗 Integrations
