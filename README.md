@@ -124,6 +124,27 @@ Environment variables (or pass as options):
 - `JELLYFIN_TIMEOUT`: request timeout in milliseconds (optional)
 - `JELLYFIN_AUTH_MODE`: authentication mode (`auto`|`header`|`query`) — default is `auto`
 
+### Jellyfin configuration via environment variables
+
+You can configure the Jellyfin integration purely via environment variables. The application validates required values and will fail with a clear message if they are missing when strict validation is used (for example by scripts).
+
+- `JELLYFIN_BASE_URL` (required): base URL of your Jellyfin server (e.g. `http://192.168.1.31:8096`).
+- `JELLYFIN_API_KEY` (required): Jellyfin API key.
+- `JELLYFIN_USER_ID` (optional): a Jellyfin user id to scope queries.
+- `JELLYFIN_AUTH_MODE` (optional): `auto`|`header`|`query` (default `auto`).
+- `JELLYFIN_TIMEOUT` (optional): request timeout in milliseconds.
+
+Examples:
+
+Set values in a `.env` file or export them before running scripts:
+
+```bash
+JELLYFIN_BASE_URL=http://192.168.1.31:8096
+JELLYFIN_API_KEY=your_api_key_here
+```
+
+The sync and updater scripts use a centralized config helper which will throw a helpful error if `JELLYFIN_BASE_URL` or `JELLYFIN_API_KEY` are not set when strict validation is requested.
+
 Auth behaviour:
 
 - `auto` (default): the client sends the recommended `Authorization: MediaBrowser Token="..."` header and will retry once using the `ApiKey` query parameter if the server responds `401`.
