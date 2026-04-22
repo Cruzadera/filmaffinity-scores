@@ -145,6 +145,53 @@ JELLYFIN_API_KEY=your_api_key_here
 
 The sync and updater scripts use a centralized config helper which will throw a helpful error if `JELLYFIN_BASE_URL` or `JELLYFIN_API_KEY` are not set when strict validation is requested.
 
+### Setup Jellyfin API key
+
+To allow this service to update your Jellyfin metadata you need an API key (token) from your Jellyfin server:
+
+1. Log in to Jellyfin web UI with an account that can create API keys (your personal user is fine).
+2. Open the user menu (top-right) and click your username, or go to **Dashboard → Users** and select your user.
+3. Find the **API Keys** or **API Keys / Manage API Keys** section and create a new key (give it a name like `filmaffinity-sync`).
+4. Copy the generated token and store it securely. Use it as the value for `JELLYFIN_API_KEY`.
+
+If you prefer to use query-based auth, set `JELLYFIN_AUTH_MODE=query` and the library will send the token as `ApiKey` query parameter.
+
+### Example workflows
+
+1) Dry-run to preview changes (recommended first):
+
+```bash
+JELLYFIN_BASE_URL=http://192.168.1.31:8096 \
+JELLYFIN_API_KEY=xxxxxx \
+LOG_LEVEL=debug \
+SYNC_JELLYFIN_DRY_RUN=true \
+  node scripts/sync-jellyfin.js --limit=5 --batch-size=2
+```
+
+2) Apply a small real run (careful):
+
+```bash
+JELLYFIN_BASE_URL=http://192.168.1.31:8096 \
+JELLYFIN_API_KEY=xxxxxx \
+SYNC_JELLYFIN_DRY_RUN=false \
+  node scripts/sync-jellyfin.js --limit=10 --batch-size=3
+```
+
+3) Sync only Series and use a page-size tuning example:
+
+```bash
+JELLYFIN_BASE_URL=http://192.168.1.31:8096 \
+JELLYFIN_API_KEY=xxxxxx \
+node scripts/sync-jellyfin.js --include-item-types=Series --page-size=50 --limit=50
+```
+
+Notes:
+
+- Start with a dry-run and small `--limit` to confirm payloads look correct.
+- Use `SYNC_JELLYFIN_BATCH_SIZE` and `SYNC_JELLYFIN_DELAY_MS` to tune concurrency and avoid overloading your Jellyfin server.
+- If you get `401` errors, try `JELLYFIN_AUTH_MODE=query`.
+
+
 Auth behaviour:
 
 - `auto` (default): the client sends the recommended `Authorization: MediaBrowser Token="..."` header and will retry once using the `ApiKey` query parameter if the server responds `401`.
