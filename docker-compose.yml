@@ -12,3 +12,13 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     shm_size: '1gb'
+  scheduler:
+    build:
+      context: .
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    # Run an initial full cache update, then run update once per day
+    command: sh -c "node src/scripts/updateCache.js || true; while true; do sleep ${SLEEP_SECONDS:-86400}; node src/scripts/updateCache.js || true; done"
