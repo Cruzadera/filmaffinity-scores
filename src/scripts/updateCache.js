@@ -26,9 +26,11 @@ async function fetchJellyfin(pathname, searchParams = {}, authMode = "header") {
 
   const headers = {};
   if (authMode === "header") {
-    headers["X-Emby-Token"] = JELLYFIN_API_KEY;
+    // Use the recommended MediaBrowser Authorization header for Jellyfin
+    headers["Authorization"] = `MediaBrowser Token="${JELLYFIN_API_KEY}"`;
   } else {
-    url.searchParams.set("api_key", JELLYFIN_API_KEY);
+    // Use ApiKey query parameter (capitalization matches Jellyfin recommendation)
+    url.searchParams.set("ApiKey", JELLYFIN_API_KEY);
   }
 
   const res = await fetch(url, {
