@@ -151,6 +151,14 @@ You can configure the Jellyfin integration purely via environment variables. The
 - `JELLYFIN_AUTH_MODE` (optional): `auto`|`header`|`query` (default `auto`).
 - `JELLYFIN_TIMEOUT` (optional): request timeout in milliseconds.
 
+Additional environment variables for the incremental cache updater
+
+- `CACHE_TTL_DAYS`: number — default TTL in days for cache entries (used when the movie is not recent). Default: `30`.
+- `RECENT_TTL_DAYS`: number — TTL in days for recent releases (shorter TTL to refresh recent movies more often). Default: `7`.
+- `RECENT_YEARS`: number — how many years back are considered "recent" (used to pick `RECENT_TTL_DAYS`). Default: `2`.
+- `REQUEST_DELAY_MS`: number — milliseconds to wait between scraping requests to FilmAffinity (helps avoid rate-limits/blocks). Default: `5000`.
+- `SYNC_JELLYFIN_LIMIT`: integer — maximum number of items to process (useful for testing). Default: no limit.
+
 Examples:
 
 Set values in a `.env` file or export them before running scripts:
