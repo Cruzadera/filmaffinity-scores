@@ -1,3 +1,5 @@
 node_modules
 .env
 .cache
+data/ratings.json
+data/ratings.db

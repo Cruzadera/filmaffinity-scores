@@ -1,13 +1,28 @@
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 const configured = (process.env.LOG_LEVEL || "info").toLowerCase();
 const minLevel = LEVELS[configured] || LEVELS.info;
+const ANSI = {
+  reset: '\x1b[0m',
+  cyan: '\x1b[36m',
+  yellow: '\x1b[33m',
+  red: '\x1b[31m',
+};
 
 function ts() {
-  return new Date().toISOString();
+  return new Date().toISOString().replace('T', ' ').replace('Z', '');
 }
 
 function format(level, msg, meta) {
-  const base = `${ts()} ${level.toUpperCase()} - ${msg}`;
+  const upper = level.toUpperCase();
+  const coloredLevel =
+    level === 'info'
+      ? `${ANSI.cyan}${upper}${ANSI.reset}`
+      : level === 'warn'
+        ? `${ANSI.yellow}${upper}${ANSI.reset}`
+        : level === 'error'
+          ? `${ANSI.red}${upper}${ANSI.reset}`
+          : upper;
+  const base = `${ts()} ${coloredLevel} - ${msg}`;
   if (meta) {
     try {
       return base + ' ' + (typeof meta === 'string' ? meta : JSON.stringify(meta));

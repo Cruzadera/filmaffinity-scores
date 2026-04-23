@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 const dotenv = require('dotenv');
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const path = require('path');
 const logger = require('../src/logging');
+const { init: initDb } = require('../src/db/sqlite');
 const JellyfinClient = require('../src/services/jellyfinClient');
 const { fetchMoviesIterator } = require('../src/services/jellyfinLibrary');
 const { getFilmAffinityRating } = require('../src/scraper/filmaffinity');
 const { updateMovieMetadata } = require('../src/services/jellyfinUpdater');
+const { buildCacheKey } = require('../src/scripts/cacheUtils');
+const { processMoviePoster } = require('../src/services/posterProcessor');
+
+const DEFAULT_DB_PATH = path.join(__dirname, '../data/ratings.db');
 
 function parseArgs(argv) {
   const out = {};
@@ -39,6 +44,7 @@ function toBool(v, def = false) {
 }
 
 function toInt(v, def) {
+  if (v === undefined || v === null || String(v).trim() === '') return def;
   const n = Number(v);
   return Number.isNaN(n) ? def : n;
 }
@@ -82,6 +88,7 @@ async function processBatch(client, batch, opts, counters) {
       title = movie.originalTitle || '';
     }
     const year = movie.productionYear || (movie.raw && movie.raw.ProductionYear) || null;
+    const cacheKey = buildCacheKey(title, year);
     counters.processed += 1;
     try {
       logger.info(`Processing: ${title} (${year || 'unknown'}) [${movie.id}]`);
@@ -110,6 +117,48 @@ async function processBatch(client, batch, opts, counters) {
         logger.info(`No update needed for ${title}: ${res.reason}`);
         counters.noChange += 1;
       }
+
+      const cacheEntry = opts.db.getRating(cacheKey);
+      let posterState = null;
+      try {
+        posterState = await retry(
+          () => processMoviePoster(client, movie, fa, cacheEntry, {
+            enabled: opts.enablePosterBadges,
+            position: opts.posterBadgePosition,
+            size: opts.posterBadgeSize,
+            dryRun: opts.dryRun,
+            force: opts.force,
+          }),
+          opts.retries,
+          opts.retryDelay
+        );
+
+        if (posterState.updated) {
+          counters.posterUpdated += 1;
+        } else {
+          counters.posterSkipped += 1;
+          if (posterState.reason && posterState.reason !== 'disabled' && posterState.reason !== 'already-processed') {
+            logger.info(`Poster skipped for ${title}: ${posterState.reason}`);
+          }
+        }
+      } catch (posterErr) {
+        counters.posterFailed += 1;
+        logger.error(`Poster update failed for ${title}: ${posterErr && posterErr.message ? posterErr.message : posterErr}`);
+      }
+
+      const now = new Date().toISOString();
+      opts.db.upsert({
+        key: cacheKey,
+        title: fa.title || title,
+        year: fa.year || year || null,
+        rating: fa.rating,
+        last_rating: fa.rating,
+        votes: fa.votes || null,
+        url: fa.url || null,
+        last_updated: now,
+        poster_processed: posterState && posterState.posterHash ? posterState.posterHash : (cacheEntry && cacheEntry.poster_processed ? cacheEntry.poster_processed : null),
+        raw: JSON.stringify(fa),
+      });
     } catch (err) {
       const msg = err && err.message ? err.message : String(err);
       logger.error(`Failed processing ${movie.id}: ${msg}`);
@@ -137,14 +186,6 @@ async function processBatch(client, batch, opts, counters) {
   await Promise.allSettled(running);
 }
 
-// Utility to mark settled promises (polyfill flags)
-function markSettled(p) {
-  p.isFulfilled = false;
-  p.isRejected = false;
-  p.then(() => (p.isFulfilled = true)).catch(() => (p.isRejected = true));
-  return p;
-}
-
 async function main(argv = process.argv) {
   const args = parseArgs(argv);
   const opts = {
@@ -158,9 +199,16 @@ async function main(argv = process.argv) {
     force: toBool(args.force, toBool(process.env.SYNC_JELLYFIN_FORCE, false)),
     pageSize: toInt(args['page-size'] || process.env.SYNC_JELLYFIN_PAGE_SIZE, 100),
     includeItemTypes: args['include-item-types'] || process.env.SYNC_JELLYFIN_INCLUDE_ITEM_TYPES || 'Movie',
+    enablePosterBadges: toBool(args['enable-poster-badges'], toBool(process.env.ENABLE_POSTER_BADGES, false)),
+    posterBadgePosition: args['poster-badge-position'] || process.env.POSTER_BADGE_POSITION || 'top-right',
+    posterBadgeSize: toInt(args['poster-badge-size'] || process.env.POSTER_BADGE_SIZE, 0.2),
   };
 
-  logger.info(`Starting Jellyfin sync (dryRun=${opts.dryRun})`);
+  logger.info(`Starting Jellyfin sync (dryRun=${opts.dryRun}, posterBadges=${opts.enablePosterBadges})`);
+
+  const dbPath = process.env.DB_PATH || DEFAULT_DB_PATH;
+  const db = initDb(dbPath);
+  opts.db = db;
 
   const client = new JellyfinClient({
     baseUrl: process.env.JELLYFIN_BASE_URL,
@@ -169,31 +217,49 @@ async function main(argv = process.argv) {
     authMode: process.env.JELLYFIN_AUTH_MODE || 'query',
   });
 
-  let processedTotal = 0;
-  const counters = { processed: 0, updated: 0, skipped: 0, dryRun: 0, noChange: 0, failed: 0 };
+  try {
+    let processedTotal = 0;
+    const counters = {
+      processed: 0,
+      updated: 0,
+      skipped: 0,
+      dryRun: 0,
+      noChange: 0,
+      failed: 0,
+      posterUpdated: 0,
+      posterSkipped: 0,
+      posterFailed: 0,
+    };
 
-  const batchSize = Math.max(1, opts.batchSize);
-  let batch = [];
+    const batchSize = Math.max(1, opts.batchSize);
+    let batch = [];
 
-  for await (const movie of fetchMoviesIterator(client, { pageSize: opts.pageSize, includeItemTypes: opts.includeItemTypes })) {
-    if (opts.limit !== Infinity && processedTotal >= opts.limit) break;
-    batch.push(movie);
-    processedTotal += 1;
+    for await (const movie of fetchMoviesIterator(client, { pageSize: opts.pageSize, includeItemTypes: opts.includeItemTypes })) {
+      if (opts.limit !== Infinity && processedTotal >= opts.limit) break;
+      batch.push(movie);
+      processedTotal += 1;
 
-    if (batch.length >= batchSize) {
-      // process batch
-      await processBatch(client, batch.map((m) => ({ ...m })), opts, counters);
-      batch = [];
-      if (opts.delayMs > 0) await sleep(opts.delayMs);
+      if (batch.length >= batchSize) {
+        // process batch
+        await processBatch(client, batch.map((m) => ({ ...m })), opts, counters);
+        batch = [];
+        if (opts.delayMs > 0) await sleep(opts.delayMs);
+      }
     }
-  }
 
-  if (batch.length > 0) {
-    await processBatch(client, batch, opts, counters);
-  }
+    if (batch.length > 0) {
+      await processBatch(client, batch, opts, counters);
+    }
 
-  logger.info(`Done. Processed: ${counters.processed}, Updated: ${counters.updated}, DryRun: ${counters.dryRun}, Skipped: ${counters.skipped}, NoChange: ${counters.noChange}, Failed: ${counters.failed}`);
-  return counters;
+    logger.info(
+      `Done. Processed: ${counters.processed}, Updated: ${counters.updated}, DryRun: ${counters.dryRun}, ` +
+      `Skipped: ${counters.skipped}, NoChange: ${counters.noChange}, Failed: ${counters.failed}, ` +
+      `PosterUpdated: ${counters.posterUpdated}, PosterSkipped: ${counters.posterSkipped}, PosterFailed: ${counters.posterFailed}`
+    );
+    return counters;
+  } finally {
+    db.close();
+  }
 }
 
 if (require.main === module) {

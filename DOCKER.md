@@ -27,6 +27,9 @@ Environment variables reference
 - `JELLYFIN_BASE_URL`: your Jellyfin base URL (e.g. `http://192.168.1.31:8096`).
 - `JELLYFIN_API_KEY`: your Jellyfin API key.
 - `JELLYFIN_AUTH_MODE`: auth mode for Jellyfin client (`auto`|`header`|`query`).
+- `ENABLE_POSTER_BADGES`: enable FilmAffinity badge overlay and poster upload (`true`/`false`, default `false`).
+- `POSTER_BADGE_POSITION`: badge position (`top-right` default, also `top-left`, `bottom-right`, `bottom-left`).
+- `POSTER_BADGE_SIZE`: badge width ratio relative to poster width (default `0.2`).
 - `PUPPETEER_EXECUTABLE_PATH` : optional — set only if you want to use a system-installed Chromium.
 - `DEBUG_SCREENSHOTS` : set to `true` to persist debug screenshots under the `data/` folder inside the container (disabled by default).
 
