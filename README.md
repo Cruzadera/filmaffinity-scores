@@ -153,7 +153,7 @@ You can configure the Jellyfin integration purely via environment variables. The
 
 Additional environment variables for the incremental cache updater
 
-- `CACHE_TTL_DAYS`: number — default TTL in days for cache entries (used when the movie is not recent). Default: `30`.
+- `CACHE_TTL`: number — canonical cache TTL in seconds (used by the app for in-memory and persisted cache). For example, `86400` = 1 day. If you previously used `CACHE_TTL_DAYS`, set `CACHE_TTL` to `days * 86400`.
 - `RECENT_TTL_DAYS`: number — TTL in days for recent releases (shorter TTL to refresh recent movies more often). Default: `7`.
 - `RECENT_YEARS`: number — how many years back are considered "recent" (used to pick `RECENT_TTL_DAYS`). Default: `2`.
 - `REQUEST_DELAY_MS`: number — milliseconds to wait between scraping requests to FilmAffinity (helps avoid rate-limits/blocks). Default: `5000`.

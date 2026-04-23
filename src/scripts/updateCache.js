@@ -7,10 +7,19 @@ dotenv.config();
 
 const OUTPUT_FILE = path.join(__dirname, "../../data/ratings.json");
 const REQUEST_DELAY_MS = Number(process.env.REQUEST_DELAY_MS || 5000);
-const JELLYFIN_URL = (process.env.JELLYFIN_URL || "http://localhost:8096").replace(/\/+$/, "");
+const JELLYFIN_URL = (
+  process.env.JELLYFIN_BASE_URL || process.env.JELLYFIN_URL || "http://localhost:8096"
+).replace(/\/+$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
 
-const CACHE_TTL_DAYS = Number(process.env.CACHE_TTL_DAYS || 30);
+// `CACHE_TTL` (seconds) is the canonical cache TTL used by the app (see .env).
+// For backward-compatibility we allow `CACHE_TTL_DAYS`, but prefer `CACHE_TTL` when present.
+const CACHE_TTL_SECONDS = process.env.CACHE_TTL ? Number(process.env.CACHE_TTL) : undefined;
+const CACHE_TTL_DAYS = process.env.CACHE_TTL_DAYS
+  ? Number(process.env.CACHE_TTL_DAYS)
+  : CACHE_TTL_SECONDS
+  ? Math.round(CACHE_TTL_SECONDS / 86400)
+  : 30;
 const RECENT_TTL_DAYS = Number(process.env.RECENT_TTL_DAYS || 7);
 const RECENT_YEARS = Number(process.env.RECENT_YEARS || 2);
 
