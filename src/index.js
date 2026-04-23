@@ -1,10 +1,10 @@
 const express = require("express");
-const fs = require("fs");
 const path = require("path");
 const dotenv = require("dotenv");
 const NodeCache = require("node-cache");
 const { getFilmAffinityRating, ScraperError } = require("./scraper/filmaffinity");
 const logger = require("./logging");
+const { init: initDb } = require("./db/sqlite");
 dotenv.config();
 
 const app = express();
@@ -16,7 +16,8 @@ const cache = new NodeCache({
 });
 
 const PORT = process.env.PORT || 8085;
-const CACHE_FILE = path.join(__dirname, "../data/ratings.json");
+const DB_FILE = process.env.DB_PATH || path.join(__dirname, "../data/ratings.db");
+const db = initDb(DB_FILE);
 
 function normalizeTitle(title) {
   return String(title || "")
@@ -34,24 +35,6 @@ function buildCacheKey(title, year) {
   const normalizedTitle = normalizeTitle(title).toLowerCase();
   const normalizedYear = normalizeYear(year);
   return normalizedYear ? `${normalizedTitle}::${normalizedYear}` : normalizedTitle;
-}
-
-function readLocalCache() {
-  if (!fs.existsSync(CACHE_FILE)) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(fs.readFileSync(CACHE_FILE, "utf-8"));
-  } catch (err) {
-    console.error("Error reading local cache:", err.message);
-    return {};
-  }
-}
-
-function writeLocalCache(cacheData) {
-  fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
-  fs.writeFileSync(CACHE_FILE, JSON.stringify(cacheData, null, 2), "utf-8");
 }
 
 function validateMovieQuery(query, requireYear = false) {
@@ -81,24 +64,25 @@ async function handleRatingRequest(req, res, { requireYear = false } = {}) {
 
   const { title, year } = validation;
   const cacheKey = buildCacheKey(title, year);
-  const legacyCacheKey = buildCacheKey(title);
 
   if (cache.has(cacheKey)) {
     logger.info(`In-memory cache hit: ${title}${year ? ` (${year})` : ""}`);
     return res.json(cache.get(cacheKey));
   }
 
-  const localCache = readLocalCache();
-  const cachedEntry = localCache[cacheKey];
-  const legacyEntry = !year ? null : localCache[legacyCacheKey];
-  const cacheHit =
-    cachedEntry ||
-    (legacyEntry && (!legacyEntry.year || String(legacyEntry.year) === year) ? legacyEntry : null);
-
-  if (cacheHit) {
-    logger.info(`File cache hit: ${title}${year ? ` (${year})` : ""}`);
-    cache.set(cacheKey, cacheHit);
-    return res.json(cacheHit);
+  // DB lookup (includes fallback to title-only key for migrated entries)
+  let dbEntry = db.getRating(cacheKey);
+  if (!dbEntry && year) {
+    const legacyEntry = db.getRating(buildCacheKey(title));
+    if (legacyEntry && (!legacyEntry.year || String(legacyEntry.year) === year)) dbEntry = legacyEntry;
+  }
+  if (dbEntry) {
+    const hitData = dbEntry.raw
+      ? JSON.parse(dbEntry.raw)
+      : { title: dbEntry.title, year: dbEntry.year, rating: dbEntry.rating, votes: dbEntry.votes, url: dbEntry.url };
+    logger.info(`DB cache hit: ${title}${year ? ` (${year})` : ""}`);
+    cache.set(cacheKey, hitData);
+    return res.json(hitData);
   }
 
   logger.info(`Fetching FilmAffinity rating for: ${title}${year ? ` (${year})` : ""}`);
@@ -112,8 +96,16 @@ async function handleRatingRequest(req, res, { requireYear = false } = {}) {
     }
 
     cache.set(cacheKey, data);
-    localCache[cacheKey] = data;
-    writeLocalCache(localCache);
+    db.upsert({
+      key: cacheKey,
+      title: data.title || title,
+      year: data.year || year || null,
+      rating: data.rating,
+      votes: data.votes,
+      url: data.url,
+      last_updated: new Date().toISOString(),
+      raw: JSON.stringify(data),
+    });
 
     logger.info(`Stored in cache: ${title}${year ? ` (${year})` : ""} (${data.rating})`);
     return res.json(data);

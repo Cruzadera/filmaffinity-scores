@@ -1,27 +1,23 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const http = require("node:http");
+const os = require("node:os");
 const path = require("node:path");
 const { after, test } = require("node:test");
+const { init: initDb } = require("../src/db/sqlite");
 
 const repoRoot = path.join(__dirname, "..");
-const cacheFile = path.join(repoRoot, "data", "ratings.json");
 const indexPath = path.join(repoRoot, "src", "index.js");
 const scraperPath = path.join(repoRoot, "src", "scraper", "filmaffinity.js");
 
-const originalCacheExists = fs.existsSync(cacheFile);
-const originalCacheContent = originalCacheExists ? fs.readFileSync(cacheFile, "utf-8") : null;
+// Use an isolated temp DB per test run so tests never interfere with real data
+const tmpDbPath = path.join(os.tmpdir(), `ratings-test-${Date.now()}.db`);
+process.env.DB_PATH = tmpDbPath;
 
-function restoreCacheFile() {
-  if (originalCacheExists) {
-    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
-    fs.writeFileSync(cacheFile, originalCacheContent, "utf-8");
-    return;
-  }
-
-  if (fs.existsSync(cacheFile)) {
-    fs.unlinkSync(cacheFile);
-  }
+function resetDb() {
+  if (fs.existsSync(tmpDbPath)) fs.unlinkSync(tmpDbPath);
+  // Clear module cache so index.js re-initialises the DB
+  delete require.cache[indexPath];
 }
 
 function loadApp(mockGetFilmAffinityRating) {
@@ -54,9 +50,9 @@ function startServer(app) {
 }
 
 after(() => {
-  restoreCacheFile();
   delete require.cache[indexPath];
   delete require.cache[scraperPath];
+  if (fs.existsSync(tmpDbPath)) fs.unlinkSync(tmpDbPath);
 });
 
 test('GET /movie returns 400 when "title" is missing', async (t) => {
@@ -108,7 +104,7 @@ test('GET /movie returns 400 when "year" is invalid', async (t) => {
 });
 
 test("GET /movie returns FilmAffinity data for valid input", async (t) => {
-  restoreCacheFile();
+  resetDb();
 
   const expectedPayload = {
     title: "Alien",
@@ -127,7 +123,7 @@ test("GET /movie returns FilmAffinity data for valid input", async (t) => {
 
   t.after(() => {
     server.close();
-    restoreCacheFile();
+    resetDb();
   });
 
   const response = await fetch(`${baseUrl}/movie?title=Alien&year=1979`);
@@ -135,12 +131,15 @@ test("GET /movie returns FilmAffinity data for valid input", async (t) => {
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), expectedPayload);
 
-  const cacheContent = JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
-  assert.deepEqual(cacheContent["alien::1979"], expectedPayload);
+  const verifyDb = initDb(tmpDbPath);
+  const row = verifyDb.getRating("alien::1979");
+  verifyDb.close();
+  assert.ok(row, "DB entry should exist for alien::1979");
+  assert.deepEqual(JSON.parse(row.raw), expectedPayload);
 });
 
 test("GET /movie normalizes title input before matching", async (t) => {
-  restoreCacheFile();
+  resetDb();
 
   const expectedPayload = {
     title: "Amelie",
@@ -159,7 +158,7 @@ test("GET /movie normalizes title input before matching", async (t) => {
 
   t.after(() => {
     server.close();
-    restoreCacheFile();
+    resetDb();
   });
 
   const response = await fetch(`${baseUrl}/movie?title=%20%20Am%C3%A9lie%20%20&year=2001`);
@@ -167,12 +166,15 @@ test("GET /movie normalizes title input before matching", async (t) => {
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), expectedPayload);
 
-  const cacheContent = JSON.parse(fs.readFileSync(cacheFile, "utf-8"));
-  assert.deepEqual(cacheContent["amelie::2001"], expectedPayload);
+  const verifyDb = initDb(tmpDbPath);
+  const row = verifyDb.getRating("amelie::2001");
+  verifyDb.close();
+  assert.ok(row, "DB entry should exist for amelie::2001");
+  assert.deepEqual(JSON.parse(row.raw), expectedPayload);
 });
 
 test("GET /movie returns 404 when the scraper finds no results", async (t) => {
-  restoreCacheFile();
+  resetDb();
 
   const app = loadApp(async (title, year) => {
     assert.equal(title, "unknown movie");
@@ -183,7 +185,7 @@ test("GET /movie returns 404 when the scraper finds no results", async (t) => {
 
   t.after(() => {
     server.close();
-    restoreCacheFile();
+    resetDb();
   });
 
   const response = await fetch(`${baseUrl}/movie?title=Unknown%20Movie&year=2099`);
@@ -195,7 +197,7 @@ test("GET /movie returns 404 when the scraper finds no results", async (t) => {
 });
 
 test("GET /movie returns 502 when the scraper errors", async (t) => {
-  restoreCacheFile();
+  resetDb();
 
   const app = loadApp(async (title, year) => {
     assert.equal(title, "some title");
@@ -208,7 +210,7 @@ test("GET /movie returns 502 when the scraper errors", async (t) => {
 
   t.after(() => {
     server.close();
-    restoreCacheFile();
+    resetDb();
   });
 
   const response = await fetch(`${baseUrl}/movie?title=Some%20Title&year=2000`);
