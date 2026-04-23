@@ -70,7 +70,7 @@ class JellyfinClient {
     return headers;
   }
 
-  async _request(method, path, { params, body, headers: customHeaders } = {}) {
+  async _request(method, path, { params, body, headers: customHeaders, responseType = 'auto' } = {}) {
     // if authMode === 'query', add ApiKey param to initial request
     const paramsWithAuth = Object.assign({}, params || {});
     if (this.apiKey && this.authMode === 'query') {
@@ -152,6 +152,15 @@ class JellyfinClient {
       throw err;
     }
 
+    if (responseType === 'buffer') {
+      const ab = await res.arrayBuffer();
+      return Buffer.from(ab);
+    }
+
+    if (responseType === 'text') {
+      return res.text();
+    }
+
     if (isJson) return res.json();
     return res.text();
   }
@@ -163,6 +172,14 @@ class JellyfinClient {
 
   post(path, body) {
     return this._request('POST', path, { body });
+  }
+
+  getBinary(path, params, headers) {
+    return this._request('GET', path, { params, headers, responseType: 'buffer' });
+  }
+
+  postBinary(path, body, { params, headers } = {}) {
+    return this._request('POST', path, { body, params, headers, responseType: 'text' });
   }
 
   // Initial endpoints
@@ -177,6 +194,77 @@ class JellyfinClient {
 
   getUsers() {
     return this.get('/Users');
+  }
+
+  getPrimaryImage(itemId) {
+    if (!itemId) throw new Error('getPrimaryImage requires an itemId');
+    return this.getBinary(`/Items/${encodeURIComponent(itemId)}/Images/Primary`, { Quality: 90 });
+  }
+
+  uploadPrimaryImage(itemId, imageBuffer, format = 'jpeg') {
+    if (!itemId) throw new Error('uploadPrimaryImage requires an itemId');
+    const mimeType = format === 'jpg' ? 'image/jpeg' : `image/${format}`;
+    // Jellyfin expects base64-encoded body with Content-Type: image/*
+    // Must use http.request with explicit Content-Length; fetch sends chunked
+    // transfer encoding for Buffer bodies which causes FromBase64Transform to fail.
+    const base64Buf = Buffer.from(
+      Buffer.isBuffer(imageBuffer) ? imageBuffer.toString('base64') : imageBuffer,
+      'utf8'
+    );
+    return this._httpUpload(
+      `/Items/${encodeURIComponent(itemId)}/Images/Primary`,
+      base64Buf,
+      mimeType
+    );
+  }
+
+  _httpUpload(path, bodyBuffer, contentType) {
+    const url = new URL(`${this.baseUrl}${path}`);
+    const isHttps = url.protocol === 'https:';
+    const transport = isHttps ? require('https') : require('http');
+
+    const headers = {
+      'Content-Type': contentType,
+      'Content-Length': bodyBuffer.length,
+    };
+    if (this.apiKey && this.authMode !== 'query') {
+      headers.Authorization = `MediaBrowser Token="${this.apiKey}"`;
+    } else if (this.apiKey) {
+      url.searchParams.set('ApiKey', this.apiKey);
+    }
+
+    return new Promise((resolve, reject) => {
+      const timeoutMs = this.timeout || DEFAULT_TIMEOUT;
+      const req = transport.request(
+        {
+          hostname: url.hostname,
+          port: url.port || (isHttps ? 443 : 80),
+          path: url.pathname + url.search,
+          method: 'POST',
+          headers,
+        },
+        (res) => {
+          let data = '';
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            if (res.statusCode >= 200 && res.statusCode < 300) {
+              resolve(data || null);
+            } else {
+              const err = new Error(`Jellyfin API error ${res.statusCode}: ${data.slice(0, 200)}`);
+              err.status = res.statusCode;
+              reject(err);
+            }
+          });
+        }
+      );
+      req.setTimeout(timeoutMs, () => {
+        req.destroy();
+        reject(new Error(`Request timed out after ${timeoutMs} ms`));
+      });
+      req.on('error', reject);
+      req.write(bodyBuffer);
+      req.end();
+    });
   }
 }
 
