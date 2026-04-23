@@ -5,6 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "scheduler": "node scripts/scheduler.js",
     "update-cache": "node src/scripts/updateCache.js",
     "update-jellyfin": "node src/scripts/updateJellyfin.js",
     "sync-jellyfin": "node scripts/sync-jellyfin.js",

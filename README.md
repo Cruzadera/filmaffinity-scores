@@ -102,6 +102,7 @@ docker compose up -d scheduler
 ```
 
 The scheduler runs `updateCache` and then `sync-jellyfin` on startup and each cycle, so poster badges are updated automatically when enabled.
+It is implemented in `scripts/scheduler.js` and can force the first sync pass on startup to fill missing poster badges.
 
 Run full stack:
 
@@ -124,6 +125,7 @@ This service is designed to work with:
 
 Main scripts:
 
+* `scripts/scheduler.js` (scheduler loop: cache + sync)
 * `scripts/sync-jellyfin.js` (recommended)
 * `src/scripts/updateJellyfin.js` (legacy updater)
 
@@ -136,8 +138,13 @@ Optional env vars:
 
 * `JELLYFIN_AUTH_MODE`: `auto` | `header` | `query`
 * `SYNC_JELLYFIN_DRY_RUN`: `true`/`false`
+* `SYNC_JELLYFIN_FORCE_ON_STARTUP`: `true`/`false` (default `true`, used by `scripts/scheduler.js`)
 * `SYNC_JELLYFIN_BATCH_SIZE`, `SYNC_JELLYFIN_DELAY_MS`, `SYNC_JELLYFIN_RETRIES`, `SYNC_JELLYFIN_RETRY_DELAY`
 * `SYNC_JELLYFIN_PAGE_SIZE`, `SYNC_JELLYFIN_LIMIT`, `SYNC_JELLYFIN_INCLUDE_ITEM_TYPES`
+
+Notes:
+
+* Leave `SYNC_JELLYFIN_LIMIT` empty to process without limit.
 
 Poster badge env vars:
 

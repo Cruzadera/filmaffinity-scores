@@ -4,7 +4,7 @@ const { init: initDb } = require("../db/sqlite");
 const dotenv = require("dotenv");
 const { getFilmAffinityRating } = require("../services/filmaffinity");
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const OUTPUT_FILE = path.join(__dirname, "../../data/ratings.json");
 const DEFAULT_DB_PATH = path.join(__dirname, "../../data/ratings.db");
@@ -13,6 +13,11 @@ const JELLYFIN_URL = (
   process.env.JELLYFIN_BASE_URL || process.env.JELLYFIN_URL || "http://localhost:8096"
 ).replace(/\/+$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
+const INCLUDE_ITEM_TYPES = (process.env.SYNC_JELLYFIN_INCLUDE_ITEM_TYPES || "Movie")
+  .split(",")
+  .map((v) => v.trim())
+  .filter(Boolean)
+  .join(",");
 
 // `CACHE_TTL` (seconds) is the canonical cache TTL used by the app (see .env).
 // For backward-compatibility we allow `CACHE_TTL_DAYS`, but prefer `CACHE_TTL` when present.
@@ -62,9 +67,10 @@ async function fetchJellyfin(pathname, searchParams = {}, authMode = "header") {
 
 async function fetchTitlesFromJellyfin() {
   console.log(`Fetching titles from Jellyfin at ${JELLYFIN_URL}...`);
+  console.log(`IncludeItemTypes for cache update: ${INCLUDE_ITEM_TYPES}`);
 
   const searchParams = {
-    IncludeItemTypes: "Movie",
+    IncludeItemTypes: INCLUDE_ITEM_TYPES,
     Recursive: "true",
     Fields: "Name,ProductionYear",
   };

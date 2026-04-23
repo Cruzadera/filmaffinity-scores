@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 const dotenv = require('dotenv');
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const path = require('path');
 const logger = require('../src/logging');
@@ -44,6 +44,7 @@ function toBool(v, def = false) {
 }
 
 function toInt(v, def) {
+  if (v === undefined || v === null || String(v).trim() === '') return def;
   const n = Number(v);
   return Number.isNaN(n) ? def : n;
 }
