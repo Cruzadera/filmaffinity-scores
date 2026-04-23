@@ -5,6 +5,7 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "scheduler": "node scripts/scheduler.js",
     "update-cache": "node src/scripts/updateCache.js",
     "update-jellyfin": "node src/scripts/updateJellyfin.js",
     "sync-jellyfin": "node scripts/sync-jellyfin.js",
@@ -27,6 +28,7 @@
     "node-cache": "^5.1.2",
     "puppeteer": "^24.29.1",
     "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2"
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
+    "sharp": "^0.34.5"
   }
 }

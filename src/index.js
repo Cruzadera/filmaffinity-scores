@@ -101,6 +101,7 @@ async function handleRatingRequest(req, res, { requireYear = false } = {}) {
       title: data.title || title,
       year: data.year || year || null,
       rating: data.rating,
+      last_rating: data.rating,
       votes: data.votes,
       url: data.url,
       last_updated: new Date().toISOString(),

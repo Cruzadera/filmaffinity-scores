@@ -4,7 +4,7 @@ const { init: initDb } = require("../db/sqlite");
 const dotenv = require("dotenv");
 const { getFilmAffinityRating } = require("../services/filmaffinity");
 
-dotenv.config();
+dotenv.config({ quiet: true });
 
 const OUTPUT_FILE = path.join(__dirname, "../../data/ratings.json");
 const DEFAULT_DB_PATH = path.join(__dirname, "../../data/ratings.db");
@@ -13,6 +13,11 @@ const JELLYFIN_URL = (
   process.env.JELLYFIN_BASE_URL || process.env.JELLYFIN_URL || "http://localhost:8096"
 ).replace(/\/+$/, "");
 const JELLYFIN_API_KEY = process.env.JELLYFIN_API_KEY;
+const INCLUDE_ITEM_TYPES = (process.env.SYNC_JELLYFIN_INCLUDE_ITEM_TYPES || "Movie")
+  .split(",")
+  .map((v) => v.trim())
+  .filter(Boolean)
+  .join(",");
 
 // `CACHE_TTL` (seconds) is the canonical cache TTL used by the app (see .env).
 // For backward-compatibility we allow `CACHE_TTL_DAYS`, but prefer `CACHE_TTL` when present.
@@ -62,9 +67,10 @@ async function fetchJellyfin(pathname, searchParams = {}, authMode = "header") {
 
 async function fetchTitlesFromJellyfin() {
   console.log(`Fetching titles from Jellyfin at ${JELLYFIN_URL}...`);
+  console.log(`IncludeItemTypes for cache update: ${INCLUDE_ITEM_TYPES}`);
 
   const searchParams = {
-    IncludeItemTypes: "Movie",
+    IncludeItemTypes: INCLUDE_ITEM_TYPES,
     Recursive: "true",
     Fields: "Name,ProductionYear",
   };
@@ -126,7 +132,7 @@ async function updateCache() {
       const existing = loadExistingCache();
       for (const [, v] of Object.entries(existing)) {
         const key = buildCacheKey(v.title, v.year);
-        db.upsert({ key, title: v.title, year: v.year, rating: v.rating, votes: v.votes, url: v.url, last_updated: v.last_updated, raw: JSON.stringify(v) });
+        db.upsert({ key, title: v.title, year: v.year, rating: v.rating, last_rating: v.rating, votes: v.votes, url: v.url, last_updated: v.last_updated, raw: JSON.stringify(v) });
       }
       console.log("Migration complete.");
     }
@@ -137,11 +143,17 @@ async function updateCache() {
   // Sort recent movies first (prioritize updates)
   titles.sort((a, b) => (Number(b.year || 0) - Number(a.year || 0)));
 
-  let total = titles.length;
+  const total = titles.length;
   let toUpdate = 0;
   let updated = 0;
   let skipped = 0;
   let failed = 0;
+
+  // Pre-count stale entries to show [X/Y] progress during the run
+  const staleCount = titles.filter(({ title, year }) =>
+    isStale(db.getRating(buildCacheKey(title, year)), year, { cacheTTL: CACHE_TTL_DAYS, recentTTL: RECENT_TTL_DAYS, recentYears: RECENT_YEARS })
+  ).length;
+  console.log(`${total - staleCount} fresh, ${staleCount} to fetch.`);
 
   for (const { title, year } of titles) {
     const key = buildCacheKey(title, year);
@@ -149,47 +161,48 @@ async function updateCache() {
 
     if (!isStale(entry, year, { cacheTTL: CACHE_TTL_DAYS, recentTTL: RECENT_TTL_DAYS, recentYears: RECENT_YEARS })) {
       skipped++;
-      console.log(`Skipped (fresh): ${title}`);
       continue;
     }
 
     toUpdate++;
-    console.log(`Fetching rating for: ${title} (year: ${year ?? "unknown"})`);
+    console.log(`[${toUpdate}/${staleCount}] Fetching: ${title} (${year ?? "unknown"})`);
 
     try {
       const data = await getFilmAffinityRating(title);
       if (data && data.rating) {
         const now = new Date().toISOString();
-        const row = {
+        db.upsert({
           key,
           title,
           year: year || null,
           rating: data.rating,
+          last_rating: data.rating,
           votes: data.votes || null,
           url: data.url || null,
           last_updated: now,
           raw: JSON.stringify(data),
-        };
-        db.upsert(row);
+        });
         updated++;
-        console.log(`Updated: ${title} => ${data.rating}`);
+        console.log(`[${toUpdate}/${staleCount}] Updated: ${title} => ${data.rating}`);
       } else {
         failed++;
-        console.warn(`No rating found for ${title}; keeping existing entry if present`);
+        console.warn(`[${toUpdate}/${staleCount}] No rating found for ${title}`);
       }
     } catch (err) {
       failed++;
-      console.error(`Failed to fetch ${title}: ${err.message}`);
+      console.error(`[${toUpdate}/${staleCount}] Failed: ${title}: ${err.message}`);
     }
 
     await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS));
   }
 
   db.close();
-  console.log(`Summary: total=${total}, toUpdate=${toUpdate}, updated=${updated}, skipped=${skipped}, failed=${failed}`);
+  console.log(`Done. total=${total}, fetched=${toUpdate}, updated=${updated}, skipped=${skipped}, failed=${failed}`);
 }
 
-updateCache().catch((err) => {
-  console.error("updateCache failed:", err.message);
-  process.exit(1);
-});
+updateCache()
+  .then(() => process.exit(0))
+  .catch((err) => {
+    console.error("updateCache failed:", err.message);
+    process.exit(1);
+  });
