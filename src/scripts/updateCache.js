@@ -1,11 +1,13 @@
 const fs = require("fs");
 const path = require("path");
+const { init: initDb } = require("../db/sqlite");
 const dotenv = require("dotenv");
 const { getFilmAffinityRating } = require("../services/filmaffinity");
 
 dotenv.config();
 
 const OUTPUT_FILE = path.join(__dirname, "../../data/ratings.json");
+const DEFAULT_DB_PATH = path.join(__dirname, "../../data/ratings.db");
 const REQUEST_DELAY_MS = Number(process.env.REQUEST_DELAY_MS || 5000);
 const JELLYFIN_URL = (
   process.env.JELLYFIN_BASE_URL || process.env.JELLYFIN_URL || "http://localhost:8096"
@@ -23,29 +25,11 @@ const CACHE_TTL_DAYS = process.env.CACHE_TTL_DAYS
 const RECENT_TTL_DAYS = Number(process.env.RECENT_TTL_DAYS || 7);
 const RECENT_YEARS = Number(process.env.RECENT_YEARS || 2);
 
-const { isStale } = require("./cacheUtils");
+const { isStale, buildCacheKey } = require("./cacheUtils");
 
 if (!JELLYFIN_API_KEY) {
   console.error("Missing Jellyfin API key in .env (JELLYFIN_API_KEY)");
   process.exit(1);
-}
-
-function daysSince(iso) {
-  return (Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60 * 24);
-}
-
-function computeTTLForYear(year) {
-  if (!year || isNaN(Number(year))) return CACHE_TTL_DAYS;
-  const currentYear = new Date().getFullYear();
-  if (Number(year) >= currentYear - RECENT_YEARS) return RECENT_TTL_DAYS;
-  return CACHE_TTL_DAYS;
-}
-
-function isStale(entry, year) {
-  if (!entry) return true;
-  if (!entry.last_updated) return true;
-  const ttl = computeTTLForYear(year);
-  return daysSince(entry.last_updated) > ttl;
 }
 
 async function fetchJellyfin(pathname, searchParams = {}, authMode = "header") {
@@ -110,6 +94,7 @@ async function fetchTitlesFromJellyfin() {
 }
 
 function loadExistingCache() {
+  // Legacy JSON loader; kept for migration. Prefer DB when available.
   try {
     if (!fs.existsSync(OUTPUT_FILE)) return {};
     const raw = fs.readFileSync(OUTPUT_FILE, "utf-8");
@@ -122,7 +107,6 @@ function loadExistingCache() {
 
 async function updateCache() {
   console.log("Starting incremental FilmAffinity cache update...");
-
   let titles = await fetchTitlesFromJellyfin();
   // Optionally limit number of titles to process (useful for testing)
   const MAX_TITLES = process.env.SYNC_JELLYFIN_LIMIT ? Number(process.env.SYNC_JELLYFIN_LIMIT) : undefined;
@@ -130,10 +114,25 @@ async function updateCache() {
     console.log(`Limiting titles to first ${MAX_TITLES} for this run (testing mode)`);
     titles = titles.slice(0, MAX_TITLES);
   }
-  const existing = loadExistingCache();
+  // Initialize DB
+  const DB_PATH = process.env.DB_PATH || DEFAULT_DB_PATH;
+  const db = initDb(DB_PATH);
 
-  // Normalize keys to lowercase for consistent lookup
-  const cache = { ...existing };
+  // Migrate JSON -> SQLite if DB empty and JSON present
+  try {
+    const rows = db.getAll();
+    if (rows.length === 0 && fs.existsSync(OUTPUT_FILE)) {
+      console.log("Migrating existing JSON cache into SQLite DB...");
+      const existing = loadExistingCache();
+      for (const [, v] of Object.entries(existing)) {
+        const key = buildCacheKey(v.title, v.year);
+        db.upsert({ key, title: v.title, year: v.year, rating: v.rating, votes: v.votes, url: v.url, last_updated: v.last_updated, raw: JSON.stringify(v) });
+      }
+      console.log("Migration complete.");
+    }
+  } catch (e) {
+    console.warn("Migration check failed:", e.message);
+  }
 
   // Sort recent movies first (prioritize updates)
   titles.sort((a, b) => (Number(b.year || 0) - Number(a.year || 0)));
@@ -145,8 +144,8 @@ async function updateCache() {
   let failed = 0;
 
   for (const { title, year } of titles) {
-    const key = title.toLowerCase();
-    const entry = cache[key];
+    const key = buildCacheKey(title, year);
+    const entry = db.getRating(key);
 
     if (!isStale(entry, year, { cacheTTL: CACHE_TTL_DAYS, recentTTL: RECENT_TTL_DAYS, recentYears: RECENT_YEARS })) {
       skipped++;
@@ -160,12 +159,18 @@ async function updateCache() {
     try {
       const data = await getFilmAffinityRating(title);
       if (data && data.rating) {
-        cache[key] = {
-          ...data,
-          title, // original title casing
+        const now = new Date().toISOString();
+        const row = {
+          key,
+          title,
           year: year || null,
-          last_updated: new Date().toISOString(),
+          rating: data.rating,
+          votes: data.votes || null,
+          url: data.url || null,
+          last_updated: now,
+          raw: JSON.stringify(data),
         };
+        db.upsert(row);
         updated++;
         console.log(`Updated: ${title} => ${data.rating}`);
       } else {
@@ -180,18 +185,7 @@ async function updateCache() {
     await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS));
   }
 
-  // Persist cache atomically
-  try {
-    fs.mkdirSync(path.dirname(OUTPUT_FILE), { recursive: true });
-    const tmp = `${OUTPUT_FILE}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(cache, null, 2), "utf-8");
-    fs.renameSync(tmp, OUTPUT_FILE);
-    console.log(`Cache written to ${OUTPUT_FILE}`);
-  } catch (err) {
-    console.error("Failed to write cache:", err.message);
-    process.exit(1);
-  }
-
+  db.close();
   console.log(`Summary: total=${total}, toUpdate=${toUpdate}, updated=${updated}, skipped=${skipped}, failed=${failed}`);
 }
 

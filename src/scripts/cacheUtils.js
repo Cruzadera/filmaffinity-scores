@@ -17,8 +17,24 @@ function isStale(entry, year, opts = {}) {
   return daysSince(entry.last_updated) > ttl;
 }
 
+function normalizeTitle(title) {
+  return String(title || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function buildCacheKey(title, year) {
+  const normalizedTitle = normalizeTitle(title);
+  const normalizedYear = String(year || "").trim();
+  return normalizedYear ? `${normalizedTitle}::${normalizedYear}` : normalizedTitle;
+}
+
 module.exports = {
   daysSince,
   computeTTLForYear,
   isStale,
+  normalizeTitle,
+  buildCacheKey,
 };

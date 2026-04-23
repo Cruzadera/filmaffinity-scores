@@ -21,6 +21,7 @@
   "author": "María",
   "license": "ISC",
   "dependencies": {
+    "better-sqlite3": "^8.7.0",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "node-cache": "^5.1.2",
