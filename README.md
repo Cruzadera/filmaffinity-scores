@@ -3,8 +3,7 @@
 ![Node.js](https://img.shields.io/badge/Node.js-20.x-brightgreen?logo=node.js)
 ![Docker](https://img.shields.io/badge/Docker-ready-blue?logo=docker)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
-
-## EN
+[![es](https://img.shields.io/badge/lang-es-yellow.svg)](README.es.md)
 
 Node.js service for:
 
