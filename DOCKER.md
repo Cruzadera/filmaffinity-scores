@@ -4,45 +4,117 @@ Requirements: Docker and Docker Compose installed.
 
 How to build the image
 
+# Docker Guide
+
+## Requirements
+
+- Docker
+- Docker Compose
+
+## Build image
+
 ```bash
 docker build -t filmaffinity-scores .
 ```
 
-How to run with docker-compose
+## Run with Docker Compose
 
-1. Copy `.env.example` to `.env` and edit values if needed.
-2. Start the app:
+1. Copy `.env.example` to `.env` and configure values.
+2. Start services.
+
+Full stack (API + scheduler):
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
 
-This mounts the local `data/` folder into the container to persist cache between runs.
+API only:
 
+```bash
+docker compose up -d app
+```
 
-Environment variables reference
+Scheduler only:
 
-- `PORT` : port in container and host mapping (default `8085`).
-- `CACHE_TTL` : cache TTL seconds (default `86400`).
-- `JELLYFIN_BASE_URL`: your Jellyfin base URL (e.g. `http://192.168.1.31:8096`).
-- `JELLYFIN_API_KEY`: your Jellyfin API key.
-- `JELLYFIN_AUTH_MODE`: auth mode for Jellyfin client (`auto`|`header`|`query`).
-- `ENABLE_POSTER_BADGES`: enable FilmAffinity badge overlay and poster upload (`true`/`false`, default `false`).
-- `POSTER_BADGE_POSITION`: badge position (`top-right` default, also `top-left`, `bottom-right`, `bottom-left`).
-- `POSTER_BADGE_SIZE`: badge width ratio relative to poster width (default `0.2`).
-- `PUPPETEER_EXECUTABLE_PATH` : optional — set only if you want to use a system-installed Chromium.
-- `DEBUG_SCREENSHOTS` : set to `true` to persist debug screenshots under the `data/` folder inside the container (disabled by default).
+```bash
+docker compose up -d scheduler
+```
 
-Sync script specific variables (see `.env.example`):
+## Defined services
 
-- `SYNC_JELLYFIN_DRY_RUN`, `SYNC_JELLYFIN_LIMIT`, `SYNC_JELLYFIN_BATCH_SIZE`, `SYNC_JELLYFIN_DELAY_MS`, `SYNC_JELLYFIN_RETRIES`, `SYNC_JELLYFIN_RETRY_DELAY`, `SYNC_JELLYFIN_SET_CRITIC`, `SYNC_JELLYFIN_FORCE`, `SYNC_JELLYFIN_PAGE_SIZE`, `SYNC_JELLYFIN_INCLUDE_ITEM_TYPES`.
+- `app`:
+	- Runs `npm start`
+	- Exposes port `8085` in the container
+	- Maps `${PORT:-8085}:8085` on the host
+- `scheduler`:
+	- Runs `node scripts/scheduler.js`
+	- Executes recurring `update-cache` + `sync-jellyfin` cycles
 
-Notes on Puppeteer
+## Data persistence
 
-- The image installs runtime libraries required by Chromium; Puppeteer will download a compatible Chromium during `npm install` inside the image.
-- If you encounter Chromium sandbox issues, try launching Puppeteer with `--no-sandbox --disable-setuid-sandbox` flags or set `PUPPETEER_EXECUTABLE_PATH` to a system Chromium binary.
+Both services mount:
 
-Validation
+- `./data:/app/data`
 
-- The compose service exposes the app on `http://localhost:PORT`.
-- Data is persisted in `./data/ratings.json`.
+This persists:
+
+- SQLite database (default `data/ratings.db`)
+- Original poster backups (default `data/poster-originals`)
+- Debug screenshots when `DEBUG_SCREENSHOTS=true`
+
+## Key environment variables (summary)
+
+See `.env.example` for full details.
+
+- General:
+	- `PORT` (default `8085`)
+	- `LOG_LEVEL` (`debug|info|warn|error`)
+	- `DB_PATH` (default `data/ratings.db`)
+	- `CACHE_TTL` (seconds)
+- Jellyfin:
+	- `JELLYFIN_BASE_URL`
+	- `JELLYFIN_API_KEY`
+	- `JELLYFIN_AUTH_MODE` (`auto|header|query`)
+	- `JELLYFIN_TIMEOUT`
+- Sync:
+	- `SYNC_JELLYFIN_DRY_RUN`
+	- `SYNC_JELLYFIN_LIMIT`
+	- `SYNC_JELLYFIN_BATCH_SIZE`
+	- `SYNC_JELLYFIN_DELAY_MS`
+	- `SYNC_JELLYFIN_RETRIES`
+	- `SYNC_JELLYFIN_RETRY_DELAY`
+	- `SYNC_JELLYFIN_SET_CRITIC`
+	- `SYNC_JELLYFIN_FORCE`
+	- `SYNC_JELLYFIN_PAGE_SIZE`
+	- `SYNC_JELLYFIN_INCLUDE_ITEM_TYPES`
+- Poster processing:
+	- `ENABLE_POSTER_BADGES`
+	- `POSTER_BADGE_POSITION`
+	- `POSTER_BADGE_SIZE`
+	- `POSTER_PRESERVE_ORIGINAL`
+	- `POSTER_ORIGINALS_DIR`
+- Scraping:
+	- `REQUEST_DELAY_MS`
+	- `DEBUG_SCREENSHOTS`
+	- `PUPPETEER_EXECUTABLE_PATH` (optional)
+
+## Puppeteer notes for containers
+
+- The `Dockerfile` installs required system packages for Chromium.
+- A compatible Chromium is installed during `npm ci`.
+- If sandbox issues appear, consider launching Puppeteer with `--no-sandbox --disable-setuid-sandbox` or set `PUPPETEER_EXECUTABLE_PATH` to a system Chromium binary.
+
+## Quick validation
+
+Check the API health endpoint:
+
+```bash
+curl "http://localhost:${PORT:-8085}/health"
+```
+
+View logs:
+
+```bash
+docker compose logs -f app
+docker compose logs -f scheduler
+```
