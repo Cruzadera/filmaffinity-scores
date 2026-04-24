@@ -5,6 +5,7 @@ const NodeCache = require("node-cache");
 const { getFilmAffinityRating, ScraperError } = require("./scraper/filmaffinity");
 const logger = require("./logging");
 const { init: initDb } = require("./db/sqlite");
+const { getTTLSeconds } = require("./scripts/cacheUtils");
 dotenv.config();
 
 const app = express();
@@ -81,7 +82,7 @@ async function handleRatingRequest(req, res, { requireYear = false } = {}) {
       ? JSON.parse(dbEntry.raw)
       : { title: dbEntry.title, year: dbEntry.year, rating: dbEntry.rating, votes: dbEntry.votes, url: dbEntry.url };
     logger.info(`DB cache hit: ${title}${year ? ` (${year})` : ""}`);
-    cache.set(cacheKey, hitData);
+    cache.set(cacheKey, hitData, getTTLSeconds(hitData.year || year));
     return res.json(hitData);
   }
 
@@ -95,7 +96,7 @@ async function handleRatingRequest(req, res, { requireYear = false } = {}) {
       return res.status(404).json({ error: "No result found" });
     }
 
-    cache.set(cacheKey, data);
+    cache.set(cacheKey, data, getTTLSeconds(data.year || year));
     db.upsert({
       key: cacheKey,
       title: data.title || title,

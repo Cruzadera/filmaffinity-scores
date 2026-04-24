@@ -20,13 +20,10 @@ const INCLUDE_ITEM_TYPES = (process.env.SYNC_JELLYFIN_INCLUDE_ITEM_TYPES || "Mov
   .join(",");
 
 // `CACHE_TTL` (seconds) is the canonical cache TTL used by the app (see .env).
-// For backward-compatibility we allow `CACHE_TTL_DAYS`, but prefer `CACHE_TTL` when present.
+// Legacy variable `CACHE_TTL_DAYS` has been removed to avoid duplication.
 const CACHE_TTL_SECONDS = process.env.CACHE_TTL ? Number(process.env.CACHE_TTL) : undefined;
-const CACHE_TTL_DAYS = process.env.CACHE_TTL_DAYS
-  ? Number(process.env.CACHE_TTL_DAYS)
-  : CACHE_TTL_SECONDS
-  ? Math.round(CACHE_TTL_SECONDS / 86400)
-  : 30;
+// Internally use days for updater logic; derive from CACHE_TTL if present.
+const CACHE_TTL_DAYS = CACHE_TTL_SECONDS ? Math.round(CACHE_TTL_SECONDS / 86400) : 30;
 const RECENT_TTL_DAYS = Number(process.env.RECENT_TTL_DAYS || 7);
 const RECENT_YEARS = Number(process.env.RECENT_YEARS || 2);
 

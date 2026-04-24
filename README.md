@@ -147,7 +147,22 @@ See .env.example for full details.
   - PORT (default 8085)
   - LOG_LEVEL (debug|info|warn|error, default info)
   - DB_PATH (default data/ratings.db)
-  - CACHE_TTL in seconds (default 86400)
+  - CACHE_TTL in seconds (default 86400) — canonical value for the in-memory
+    cache (node-cache). This takes precedence if set. The updater derives its
+    day-based defaults from this value and from the `RECENT_*` settings.
+
+  - RECENT_TTL_DAYS (default 7) — TTL in days applied to recent releases (they
+    are refreshed more often).
+  - RECENT_YEARS (default 2) — how many years are considered "recent".
+
+Quick notes:
+- The scheduler / updater (`update-cache.js`) uses day-based TTL logic
+  (`RECENT_TTL_DAYS` / `RECENT_YEARS`) to determine when database entries are
+  stale and should be refreshed.
+- The API process configures NodeCache with a global `CACHE_TTL` (seconds), but
+  the code now sets per-entry TTLs based on movie year so recent movies are
+  refreshed more often while older movies are cached longer.
+ 
 - Jellyfin:
   - JELLYFIN_BASE_URL
   - JELLYFIN_API_KEY

@@ -146,7 +146,21 @@ Consulta .env.example para lista completa.
   - PORT (default 8085)
   - LOG_LEVEL (debug|info|warn|error, default info)
   - DB_PATH (default data/ratings.db)
-  - CACHE_TTL en segundos (default 86400)
+  - CACHE_TTL en segundos (default 86400) — valor canónico para la caché en
+    memoria (node-cache). Este valor tiene prioridad si está presente. El
+    actualizador deriva sus valores por defecto en días a partir de este valor
+    y de las opciones `RECENT_*`.
+
+  - RECENT_TTL_DAYS (default 7) — TTL en días aplicado a estrenos recientes
+    (se refrescan con más frecuencia).
+  - RECENT_YEARS (default 2) — número de años que se consideran "recientes".
+
+Notas rápidas:
+- La lógica de refresco del scheduler (`update-cache.js`) y la comprobación de
+  stale en la base de datos se basan en `RECENT_TTL_DAYS`/`RECENT_YEARS` (días).
+- La API usa `CACHE_TTL` (segundos) para la configuración global, pero ahora la
+  aplicación aplica TTL por entrada (según el año de la película) para que las
+  películas recientes se actualicen con más frecuencia y las antiguas menos.
 - Jellyfin:
   - JELLYFIN_BASE_URL
   - JELLYFIN_API_KEY
