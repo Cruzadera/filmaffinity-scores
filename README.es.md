@@ -4,8 +4,6 @@
 ![Docker](https://img.shields.io/badge/Docker-ready-blue?logo=docker)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
-## ES
-
 Servicio Node.js para:
 
 1. Consultar valoraciones de FilmAffinity (scraping con Puppeteer).
