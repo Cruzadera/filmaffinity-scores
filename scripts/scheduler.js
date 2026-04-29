@@ -44,13 +44,22 @@ async function runTask(label, scriptPath, args = []) {
   try {
     logger.info(`Running task: ${label}`);
     await runNodeScript(scriptPath, args);
+    return true;
   } catch (err) {
     logger.error(`Task failed (${label}): ${err && err.message ? err.message : err}`);
+    return false;
   }
 }
 
 async function runCycle({ forceSync = false } = {}) {
-  await runTask('updateCache', 'src/scripts/updateCache.js');
+  const skipSyncOnUpdateFail = toBool(process.env.SKIP_SYNC_ON_UPDATE_FAIL, true);
+
+  const updateOk = await runTask('updateCache', 'src/scripts/updateCache.js');
+  if (!updateOk && skipSyncOnUpdateFail) {
+    logger.warn('Skipping sync-jellyfin because updateCache failed and SKIP_SYNC_ON_UPDATE_FAIL is true');
+    return;
+  }
+
   const syncArgs = forceSync ? ['--force'] : [];
   await runTask(`sync-jellyfin${forceSync ? ' --force' : ''}`, 'scripts/sync-jellyfin.js', syncArgs);
 }

@@ -148,6 +148,13 @@ async function processBatch(client, batch, opts, counters) {
       }
 
       const now = new Date().toISOString();
+      // Only persist poster_processed when the poster was actually uploaded/updated.
+      // This prevents dry-run runs (or failed uploads) from marking items as processed
+      // and skipping them in subsequent real runs.
+      const posterProcessedValue = (posterState && posterState.updated)
+        ? posterState.posterHash
+        : (cacheEntry && cacheEntry.poster_processed ? cacheEntry.poster_processed : null);
+
       opts.db.upsert({
         key: cacheKey,
         title: fa.title || title,
@@ -157,7 +164,7 @@ async function processBatch(client, batch, opts, counters) {
         votes: fa.votes || null,
         url: fa.url || null,
         last_updated: now,
-        poster_processed: posterState && posterState.posterHash ? posterState.posterHash : (cacheEntry && cacheEntry.poster_processed ? cacheEntry.poster_processed : null),
+        poster_processed: posterProcessedValue,
         raw: JSON.stringify(fa),
       });
     } catch (err) {

@@ -64,11 +64,25 @@ function normalizeSearchText(value) {
 }
 
 function matchesRequestedYear(candidateText, requestedYear) {
-  if (!requestedYear) {
-    return true;
+  if (!requestedYear) return true;
+
+  const txt = String(candidateText || '');
+  const req = Number(requestedYear);
+  if (!Number.isFinite(req)) {
+    return txt.includes(String(requestedYear));
   }
 
-  return candidateText.includes(String(requestedYear));
+  // Accept the candidate if any detected year is within +/-1 of the requestedYear.
+  const matches = Array.from(txt.matchAll(/\b(19|20)\d{2}\b/g)).map((m) => Number(m[0]));
+  if (matches.length > 0) {
+    for (const y of matches) {
+      if (Math.abs(y - req) <= 1) return true;
+    }
+    return false;
+  }
+
+  // Fallback: check for requested year +/- 1 as plain substrings
+  return txt.includes(String(req)) || txt.includes(String(req - 1)) || txt.includes(String(req + 1));
 }
 
 function scoreSearchCandidate(candidate, requestedTitle, requestedYear) {
