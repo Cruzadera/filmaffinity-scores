@@ -152,6 +152,11 @@ async function updateCache() {
   ).length;
   console.log(`${total - staleCount} fresh, ${staleCount} to fetch.`);
 
+  let consecutiveFailures = 0;
+  const SCRAPER_RETRIES = Number(process.env.SCRAPER_RETRIES || 3);
+  const SCRAPER_RETRY_DELAY = Number(process.env.SCRAPER_RETRY_DELAY || 1000);
+  const MAX_CONSECUTIVE_FAILURES = Number(process.env.SCRAPER_MAX_CONSECUTIVE || 5);
+
   for (const { title, year } of titles) {
     const key = buildCacheKey(title, year);
     const entry = db.getRating(key);
@@ -165,7 +170,24 @@ async function updateCache() {
     console.log(`[${toUpdate}/${staleCount}] Fetching: ${title} (${year ?? "unknown"})`);
 
     try {
-      const data = await getFilmAffinityRating(title);
+      // Retry transient failures with exponential backoff
+      let data = null;
+      let lastErr = null;
+      for (let attempt = 1; attempt <= SCRAPER_RETRIES; attempt++) {
+        try {
+          data = await getFilmAffinityRating(title, year);
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          const backoff = SCRAPER_RETRY_DELAY * Math.pow(2, attempt - 1);
+          console.warn(`Attempt ${attempt} failed for ${title}, retrying in ${backoff}ms: ${e && e.message ? e.message : e}`);
+          await new Promise((r) => setTimeout(r, backoff));
+        }
+      }
+
+      if (!data && lastErr) throw lastErr;
+
       if (data && data.rating) {
         const now = new Date().toISOString();
         db.upsert({
@@ -180,14 +202,34 @@ async function updateCache() {
           raw: JSON.stringify(data),
         });
         updated++;
+        consecutiveFailures = 0;
         console.log(`[${toUpdate}/${staleCount}] Updated: ${title} => ${data.rating}`);
       } else {
         failed++;
+        consecutiveFailures++;
         console.warn(`[${toUpdate}/${staleCount}] No rating found for ${title}`);
       }
     } catch (err) {
       failed++;
-      console.error(`[${toUpdate}/${staleCount}] Failed: ${title}: ${err.message}`);
+      consecutiveFailures++;
+      console.error(`[${toUpdate}/${staleCount}] Failed: ${title}: ${err && err.message ? err.message : err}`);
+    }
+
+    // Backoff if multiple consecutive failures detected
+    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+      const backoffMs = Math.min(60000, REQUEST_DELAY_MS * consecutiveFailures);
+      console.warn(`Detected ${consecutiveFailures} consecutive failures, backing off for ${backoffMs}ms`);
+      await new Promise((r) => setTimeout(r, backoffMs));
+      // Optionally restart shared browser in scraper to recover from corrupted sessions
+      try {
+        const scraper = require('../scraper/filmaffinity');
+        if (typeof scraper.restartBrowser === 'function') {
+          console.info('Restarting shared scraper browser to recover from failures');
+          await scraper.restartBrowser();
+        }
+      } catch (e) {
+        // ignore
+      }
     }
 
     await new Promise((r) => setTimeout(r, REQUEST_DELAY_MS));

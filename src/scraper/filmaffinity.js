@@ -6,6 +6,53 @@ const path = require("path");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Shared browser instance to reduce process churn and provide controlled
+// restart on critical errors observed during long runs (ERR_CERT*, timeouts)
+let _sharedBrowser = null;
+let _requestsSinceRestart = 0;
+const SCRAPER_MAX_REQUESTS_PER_BROWSER = Number(process.env.SCRAPER_MAX_REQUESTS_PER_BROWSER || 50);
+
+async function ensureBrowser() {
+  if (_sharedBrowser) return _sharedBrowser;
+  _sharedBrowser = await puppeteer.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-blink-features=AutomationControlled",
+    ],
+  });
+  _requestsSinceRestart = 0;
+  return _sharedBrowser;
+}
+
+async function closeSharedBrowser() {
+  if (!_sharedBrowser) return;
+  try {
+    await _sharedBrowser.close();
+  } catch (e) {
+    // ignore
+  }
+  _sharedBrowser = null;
+  _requestsSinceRestart = 0;
+}
+
+function isCriticalBrowserError(err) {
+  if (!err) return false;
+  const msg = String(err && (err.message || err)).toLowerCase();
+  return (
+    msg.includes('err_cert_verifier_changed') ||
+    msg.includes('net::err_cert') ||
+    msg.includes('err_ssl') ||
+    msg.includes('certificate') ||
+    msg.includes('ssl')
+  );
+}
+
+process.on('exit', () => {
+  if (_sharedBrowser) try { _sharedBrowser.close(); } catch (e) {}
+});
+
 function normalizeSearchText(value) {
   return String(value || "")
     .normalize("NFD")
@@ -62,18 +109,10 @@ async function getFilmAffinityRating(title, year) {
   const encodedTitle = encodeURIComponent(normalizedTitle);
   const searchUrl = `https://www.filmaffinity.com/es/search.php?stext=${encodedTitle}&stype=title`;
 
-  let browser;
+  let page;
   try {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        "--no-sandbox",
-        "--disable-setuid-sandbox",
-        "--disable-blink-features=AutomationControlled",
-      ],
-    });
-
-    const page = await browser.newPage();
+    const browser = await ensureBrowser();
+    page = await browser.newPage();
     page.setDefaultTimeout(90000);
 
     await page.setExtraHTTPHeaders({
@@ -228,7 +267,7 @@ async function getFilmAffinityRating(title, year) {
           logger.warn("Failed saving debug screenshot:", e && e.message ? e.message : e);
         }
       }
-      await browser.close();
+      try { await page.close(); } catch (e) {}
       return null;
     }
 
@@ -311,7 +350,13 @@ async function getFilmAffinityRating(title, year) {
       };
     });
 
-    await browser.close();
+    try { await page.close(); } catch (e) {}
+
+    _requestsSinceRestart += 1;
+    if (_requestsSinceRestart >= SCRAPER_MAX_REQUESTS_PER_BROWSER) {
+      logger.info('Reached max requests per browser, restarting browser instance');
+      await closeSharedBrowser();
+    }
 
     if (!data || !data.rating) {
       logger.warn(`"${title}" was found but no rating is available`);
@@ -330,7 +375,11 @@ async function getFilmAffinityRating(title, year) {
   } catch (err) {
     const logger = require("../logging");
     logger.error("Error scraping FilmAffinity:", err && err.message ? err.message : err);
-    if (browser) await browser.close().catch(() => {});
+    // If a critical browser-related error occurred, restart the shared browser
+    if (isCriticalBrowserError(err)) {
+      try { await closeSharedBrowser(); } catch (e) {}
+    }
+    if (page) try { await page.close(); } catch (e) {}
     throw new ScraperError("Failed to scrape FilmAffinity", err);
   }
 }
@@ -340,4 +389,6 @@ module.exports = {
   normalizeSearchText,
   scoreSearchCandidate,
   ScraperError,
+  // Expose a method to force-restart the shared browser (useful for backoff/recovery)
+  restartBrowser: closeSharedBrowser,
 };

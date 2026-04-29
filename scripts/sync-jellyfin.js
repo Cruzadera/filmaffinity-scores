@@ -69,6 +69,7 @@ async function retry(fn, attempts = 3, delay = 1000) {
 }
 
 async function processBatch(client, batch, opts, counters) {
+  const startFailed = counters.failed;
   const tasks = batch.map((movie) => (async () => {
     // Prefer original title when available (avoids translated labels)
     // But if the original title contains Japanese characters, prefer the localized `name`.
@@ -184,6 +185,21 @@ async function processBatch(client, batch, opts, counters) {
 
   // wait for remaining tasks
   await Promise.allSettled(running);
+
+  // If a large number of failures happened during this batch, attempt recovery
+  const failedDuringBatch = counters.failed - startFailed;
+  const failureThreshold = Math.max(3, Math.ceil(batch.length / 2));
+  if (failedDuringBatch >= failureThreshold) {
+    logger.warn(`High failure rate in batch (${failedDuringBatch}/${batch.length}), restarting scraper and backing off`);
+    try {
+      const scraper = require('../src/scraper/filmaffinity');
+      if (typeof scraper.restartBrowser === 'function') await scraper.restartBrowser();
+    } catch (e) {
+      logger.debug && logger.debug('Failed restarting scraper browser:', e && e.message ? e.message : e);
+    }
+    // brief backoff to allow remote site to cool down
+    await sleep(opts.retryDelay || 2000);
+  }
 }
 
 async function main(argv = process.argv) {
