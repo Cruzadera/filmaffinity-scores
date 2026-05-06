@@ -5,6 +5,10 @@ dotenv.config({ quiet: true });
 const { spawn } = require('child_process');
 const logger = require('../src/logging');
 
+function normalizeUrl(value) {
+  return String(value || '').trim().replace(/\/+$/, '');
+}
+
 function toBool(v, def = false) {
   if (v === undefined || v === null || String(v).trim() === '') return def;
   if (typeof v === 'boolean') return v;
@@ -67,6 +71,13 @@ async function runCycle({ forceSync = false } = {}) {
 async function main() {
   const sleepSeconds = Math.max(1, toInt(process.env.SLEEP_SECONDS, 86400));
   const forceOnStartup = toBool(process.env.SYNC_JELLYFIN_FORCE_ON_STARTUP, true);
+  const ratingsApiUrl = normalizeUrl(process.env.SYNC_RATINGS_API_URL);
+
+  if (ratingsApiUrl) {
+    logger.info(`Scheduler will resolve ratings through API mode (${ratingsApiUrl})`);
+  } else {
+    logger.warn('Scheduler is running without SYNC_RATINGS_API_URL; sync-jellyfin will use the local scraper compatibility path');
+  }
 
   logger.info(`Scheduler starting (sleepSeconds=${sleepSeconds}, forceOnStartup=${forceOnStartup})`);
 

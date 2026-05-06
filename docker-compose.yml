@@ -13,8 +13,12 @@ services:
   scheduler:
     build:
       context: .
+    depends_on:
+      - app
     env_file:
       - .env
+    environment:
+      SYNC_RATINGS_API_URL: ${SYNC_RATINGS_API_URL:-http://app:8085}
     volumes:
       - ./data:/app/data
     restart: unless-stopped

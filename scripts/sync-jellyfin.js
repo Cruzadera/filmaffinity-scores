@@ -53,6 +53,90 @@ function sleep(ms) {
   return new Promise((res) => setTimeout(res, ms));
 }
 
+function containsJapanese(text) {
+  if (!text) return false;
+  return /[\u3040-\u30ff\u31f0-\u31ff\u3000-\u303f]/.test(String(text));
+}
+
+function getMovieLookup(movie) {
+  let title = '';
+  if (movie.originalTitle && !containsJapanese(movie.originalTitle)) {
+    title = movie.originalTitle;
+  } else if (movie.name) {
+    title = movie.name;
+  } else if (movie.raw && (movie.raw.OriginalTitle || movie.raw.Name)) {
+    title = movie.raw.OriginalTitle || movie.raw.Name;
+  } else {
+    title = movie.originalTitle || '';
+  }
+
+  const year = movie.productionYear || (movie.raw && movie.raw.ProductionYear) || null;
+  const cacheKey = buildCacheKey(title, year);
+  return { title, year, cacheKey };
+}
+
+function normalizeApiBaseUrl(url) {
+  return String(url || '').trim().replace(/\/+$/, '');
+}
+
+function buildBatchEndpoint(baseUrl) {
+  return `${normalizeApiBaseUrl(baseUrl)}/ratings/batch`;
+}
+
+async function fetchRatingsBatchChunkFromApi(apiBaseUrl, lookupChunk, timeoutMs) {
+  const endpoint = buildBatchEndpoint(apiBaseUrl);
+  const body = {
+    items: lookupChunk.map(({ title, year }) => ({
+      title,
+      year: year || undefined,
+    })),
+  };
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+
+  const payload = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = payload && payload.error
+      ? payload.error
+      : `HTTP ${res.status} calling ${endpoint}`;
+    throw new Error(`Ratings API error: ${message}`);
+  }
+
+  if (!payload || !Array.isArray(payload.results)) {
+    throw new Error('Ratings API contract error: missing "results" array');
+  }
+
+  if (payload.results.length !== lookupChunk.length) {
+    throw new Error(`Ratings API contract error: expected ${lookupChunk.length} results, received ${payload.results.length}`);
+  }
+
+  return payload.results;
+}
+
+async function resolveBatchRatings(lookups, opts) {
+  if (!opts.ratingsApiUrl) return null;
+
+  const chunkSize = Math.max(1, opts.ratingsApiBatchSize || 50);
+  const out = [];
+
+  for (let i = 0; i < lookups.length; i += chunkSize) {
+    const chunk = lookups.slice(i, i + chunkSize);
+    const chunkResults = await retry(
+      () => fetchRatingsBatchChunkFromApi(opts.ratingsApiUrl, chunk, opts.ratingsApiTimeoutMs),
+      opts.retries,
+      opts.retryDelay
+    );
+    out.push(...chunkResults);
+  }
+
+  return out;
+}
+
 async function retry(fn, attempts = 3, delay = 1000) {
   let lastErr;
   for (let i = 0; i < attempts; i++) {
@@ -70,31 +154,36 @@ async function retry(fn, attempts = 3, delay = 1000) {
 
 async function processBatch(client, batch, opts, counters) {
   const startFailed = counters.failed;
-  const tasks = batch.map((movie) => (async () => {
-    // Prefer original title when available (avoids translated labels)
-    // But if the original title contains Japanese characters, prefer the localized `name`.
-    function containsJapanese(text) {
-      if (!text) return false;
-      return /[\u3040-\u30ff\u31f0-\u31ff\u3000-\u303f]/.test(String(text));
-    }
+  const lookups = batch.map((movie) => getMovieLookup(movie));
+  const ratingResults = await resolveBatchRatings(lookups, opts);
 
-    let title = '';
-    if (movie.originalTitle && !containsJapanese(movie.originalTitle)) {
-      title = movie.originalTitle;
-    } else if (movie.name) {
-      title = movie.name;
-    } else if (movie.raw && (movie.raw.OriginalTitle || movie.raw.Name)) {
-      title = movie.raw.OriginalTitle || movie.raw.Name;
-    } else {
-      title = movie.originalTitle || '';
-    }
-    const year = movie.productionYear || (movie.raw && movie.raw.ProductionYear) || null;
-    const cacheKey = buildCacheKey(title, year);
+  const tasks = batch.map((movie, idx) => (async () => {
+    const { title, year, cacheKey } = lookups[idx];
     counters.processed += 1;
     try {
       logger.info(`Processing: ${title} (${year || 'unknown'}) [${movie.id}]`);
 
-      const fa = await retry(() => getFilmAffinityRating(title, year), opts.retries, opts.retryDelay);
+      let fa = null;
+      if (ratingResults) {
+        const ratingResult = ratingResults[idx];
+        if (ratingResult && ratingResult.ok) {
+          fa = ratingResult.data;
+        } else {
+          const status = ratingResult && ratingResult.status ? Number(ratingResult.status) : 500;
+          const errMsg = ratingResult && (ratingResult.error || ratingResult.message)
+            ? `${ratingResult.error || ratingResult.message}`
+            : 'Unknown ratings API error';
+          if (status === 404 || status === 400) {
+            logger.info(`No FilmAffinity rating for ${title} (${errMsg})`);
+            counters.skipped += 1;
+            return;
+          }
+          throw new Error(`Ratings API failed for ${title}: ${errMsg}`);
+        }
+      } else {
+        fa = await retry(() => getFilmAffinityRating(title, year), opts.retries, opts.retryDelay);
+      }
+
       if (!fa) {
         logger.info(`No FilmAffinity rating for ${title}`);
         counters.skipped += 1;
@@ -222,12 +311,18 @@ async function main(argv = process.argv) {
     force: toBool(args.force, toBool(process.env.SYNC_JELLYFIN_FORCE, false)),
     pageSize: toInt(args['page-size'] || process.env.SYNC_JELLYFIN_PAGE_SIZE, 100),
     includeItemTypes: args['include-item-types'] || process.env.SYNC_JELLYFIN_INCLUDE_ITEM_TYPES || 'Movie',
+    ratingsApiUrl: normalizeApiBaseUrl(args['ratings-api-url'] || process.env.SYNC_RATINGS_API_URL || ''),
+    ratingsApiBatchSize: toInt(args['ratings-api-batch-size'] || process.env.SYNC_RATINGS_API_BATCH_SIZE, 50),
+    ratingsApiTimeoutMs: toInt(args['ratings-api-timeout-ms'] || process.env.SYNC_RATINGS_API_TIMEOUT_MS, 30000),
     enablePosterBadges: toBool(args['enable-poster-badges'], toBool(process.env.ENABLE_POSTER_BADGES, false)),
     posterBadgePosition: args['poster-badge-position'] || process.env.POSTER_BADGE_POSITION || 'top-right',
     posterBadgeSize: toInt(args['poster-badge-size'] || process.env.POSTER_BADGE_SIZE, 0.2),
   };
 
-  logger.info(`Starting Jellyfin sync (dryRun=${opts.dryRun}, posterBadges=${opts.enablePosterBadges})`);
+  logger.info(
+    `Starting Jellyfin sync (dryRun=${opts.dryRun}, posterBadges=${opts.enablePosterBadges}, ` +
+    `ratingsProvider=${opts.ratingsApiUrl ? 'api' : 'scraper'})`
+  );
 
   const dbPath = process.env.DB_PATH || DEFAULT_DB_PATH;
   const db = initDb(dbPath);

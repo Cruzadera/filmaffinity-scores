@@ -2,13 +2,18 @@ const express = require("express");
 const path = require("path");
 const dotenv = require("dotenv");
 const NodeCache = require("node-cache");
-const { getFilmAffinityRating, ScraperError } = require("./scraper/filmaffinity");
 const logger = require("./logging");
 const { init: initDb } = require("./db/sqlite");
-const { getTTLSeconds } = require("./scripts/cacheUtils");
+const {
+  buildCacheKey,
+  normalizeTitle,
+  validateMovieQuery,
+  getRating,
+} = require("./services/ratingsService");
 dotenv.config();
 
 const app = express();
+app.use(express.json({ limit: "1mb" }));
 
 // In-memory cache TTL (defaults to 1 day)
 const cache = new NodeCache({
@@ -19,43 +24,7 @@ const cache = new NodeCache({
 const PORT = process.env.PORT || 8085;
 const DB_FILE = process.env.DB_PATH || path.join(__dirname, "../data/ratings.db");
 const db = initDb(DB_FILE);
-
-function normalizeTitle(title) {
-  return String(title || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .trim();
-}
-
-function normalizeYear(year) {
-  return String(year || "").trim();
-}
-
-function buildCacheKey(title, year) {
-  const normalizedTitle = normalizeTitle(title).toLowerCase();
-  const normalizedYear = normalizeYear(year);
-  return normalizedYear ? `${normalizedTitle}::${normalizedYear}` : normalizedTitle;
-}
-
-function validateMovieQuery(query, requireYear = false) {
-  const title = normalizeTitle(query.title);
-  const year = normalizeYear(query.year);
-
-  if (!title) {
-    return { error: 'Missing "title" query parameter' };
-  }
-
-  if (requireYear && !year) {
-    return { error: 'Missing "year" query parameter' };
-  }
-
-  if (year && !/^\d{4}$/.test(year)) {
-    return { error: '"year" query parameter must be a 4-digit year' };
-  }
-
-  return { title, year };
-}
+const BATCH_MAX_ITEMS = Math.max(1, Number(process.env.BATCH_MAX_ITEMS || 100));
 
 async function handleRatingRequest(req, res, { requireYear = false } = {}) {
   const validation = validateMovieQuery(req.query, requireYear);
@@ -64,60 +33,88 @@ async function handleRatingRequest(req, res, { requireYear = false } = {}) {
   }
 
   const { title, year } = validation;
-  const cacheKey = buildCacheKey(title, year);
 
-  if (cache.has(cacheKey)) {
-    logger.info(`In-memory cache hit: ${title}${year ? ` (${year})` : ""}`);
-    return res.json(cache.get(cacheKey));
-  }
+  logger.info(`Resolving rating for: ${title}${year ? ` (${year})` : ""}`);
+  const result = await getRating({ title, year, cache, db });
 
-  // DB lookup (includes fallback to title-only key for migrated entries)
-  let dbEntry = db.getRating(cacheKey);
-  if (!dbEntry && year) {
-    const legacyEntry = db.getRating(buildCacheKey(title));
-    if (legacyEntry && (!legacyEntry.year || String(legacyEntry.year) === year)) dbEntry = legacyEntry;
-  }
-  if (dbEntry) {
-    const hitData = dbEntry.raw
-      ? JSON.parse(dbEntry.raw)
-      : { title: dbEntry.title, year: dbEntry.year, rating: dbEntry.rating, votes: dbEntry.votes, url: dbEntry.url };
-    logger.info(`DB cache hit: ${title}${year ? ` (${year})` : ""}`);
-    cache.set(cacheKey, hitData, getTTLSeconds(hitData.year || year));
-    return res.json(hitData);
-  }
-
-  logger.info(`Fetching FilmAffinity rating for: ${title}${year ? ` (${year})` : ""}`);
-
-  try {
-    const data = await getFilmAffinityRating(title, year);
-
-    if (!data || !data.rating) {
+  if (!result.ok) {
+    if (result.status === 404) {
       logger.warn(`No result found for "${title}"${year ? ` (${year})` : ""}`);
       return res.status(404).json({ error: "No result found" });
     }
 
-    cache.set(cacheKey, data, getTTLSeconds(data.year || year));
-    db.upsert({
-      key: cacheKey,
-      title: data.title || title,
-      year: data.year || year || null,
-      rating: data.rating,
-      last_rating: data.rating,
-      votes: data.votes,
-      url: data.url,
-      last_updated: new Date().toISOString(),
-      raw: JSON.stringify(data),
-    });
-
-    logger.info(`Stored in cache: ${title}${year ? ` (${year})` : ""} (${data.rating})`);
-    return res.json(data);
-  } catch (err) {
-    logger.error("Error fetching rating:", err && err.message ? err.message : err);
-    if (err && (err.name === "ScraperError" || err instanceof ScraperError)) {
-      return res.status(502).json({ error: "Scraper error", message: err.message });
+    logger.error(`Error fetching rating for ${title}${year ? ` (${year})` : ""}: ${result.message || result.error}`);
+    if (result.status === 502) {
+      return res.status(502).json({ error: "Scraper error", message: result.message || "Unknown scraper error" });
     }
     return res.status(500).json({ error: "Internal server error" });
   }
+
+  return res.json(result.data);
+}
+
+function validateBatchRequestBody(body) {
+  if (!body || typeof body !== "object") {
+    return { error: 'Body must be a JSON object with an "items" array' };
+  }
+
+  if (!Array.isArray(body.items)) {
+    return { error: 'Missing "items" array' };
+  }
+
+  if (body.items.length === 0) {
+    return { error: '"items" must contain at least one element' };
+  }
+
+  if (body.items.length > BATCH_MAX_ITEMS) {
+    return { error: `"items" exceeds max size (${BATCH_MAX_ITEMS})` };
+  }
+
+  return { items: body.items };
+}
+
+async function handleBatchRatingsRequest(req, res) {
+  const validated = validateBatchRequestBody(req.body);
+  if (validated.error) {
+    return res.status(400).json({ error: validated.error });
+  }
+
+  const results = [];
+  for (const input of validated.items) {
+    const check = validateMovieQuery(input || {}, false);
+    if (check.error) {
+      results.push({ ok: false, status: 400, error: check.error, input: input || {} });
+      continue;
+    }
+
+    const { title, year } = check;
+    const ratingResult = await getRating({ title, year, cache, db });
+    if (!ratingResult.ok) {
+      results.push({
+        ok: false,
+        status: ratingResult.status,
+        error: ratingResult.error,
+        message: ratingResult.message,
+        input: { title, year: year || null },
+      });
+      continue;
+    }
+
+    results.push({
+      ok: true,
+      status: 200,
+      source: ratingResult.source,
+      input: { title, year: year || null },
+      data: ratingResult.data,
+    });
+  }
+
+  return res.json({
+    count: results.length,
+    ok: results.filter((r) => r.ok).length,
+    failed: results.filter((r) => !r.ok).length,
+    results,
+  });
 }
 
 // Request logging middleware
@@ -130,6 +127,7 @@ app.use((req, res, next) => {
 app.get("/movie", (req, res) => handleRatingRequest(req, res, { requireYear: true }));
 
 app.get("/rating", (req, res) => handleRatingRequest(req, res));
+app.post("/ratings/batch", (req, res) => handleBatchRatingsRequest(req, res));
 
 // Health endpoint
 app.get("/health", (req, res) =>

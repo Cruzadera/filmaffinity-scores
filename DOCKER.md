@@ -22,7 +22,7 @@ docker build -t filmaffinity-scores .
 1. Copy `.env.example` to `.env` and configure values.
 2. Start services.
 
-Full stack (API + scheduler):
+Full stack (API + transitional scheduler):
 
 ```bash
 docker compose up -d --build
@@ -40,15 +40,19 @@ Scheduler only:
 docker compose up -d scheduler
 ```
 
+Note: in Compose mode, `scheduler` is configured to call `http://app:8085/ratings/batch` by default through `SYNC_RATINGS_API_URL`. This keeps the worker aligned with the future split where Jellyfin sync will live outside this repository.
+
 ## Defined services
 
 - `app`:
 	- Runs `npm start`
 	- Exposes port `8085` in the container
 	- Maps `${PORT:-8085}:8085` on the host
+	- Acts as the canonical ratings provider for external integrations
 - `scheduler`:
 	- Runs `node scripts/scheduler.js`
 	- Executes recurring `update-cache` + `sync-jellyfin` cycles
+	- Consumes the API service by default via `SYNC_RATINGS_API_URL=http://app:8085`
 
 ## Data persistence
 
@@ -87,6 +91,9 @@ See `.env.example` for full details.
 	- `SYNC_JELLYFIN_FORCE`
 	- `SYNC_JELLYFIN_PAGE_SIZE`
 	- `SYNC_JELLYFIN_INCLUDE_ITEM_TYPES`
+	- `SYNC_RATINGS_API_URL`
+	- `SYNC_RATINGS_API_BATCH_SIZE`
+	- `SYNC_RATINGS_API_TIMEOUT_MS`
 - Poster processing:
 	- `ENABLE_POSTER_BADGES`
 	- `POSTER_BADGE_POSITION`
