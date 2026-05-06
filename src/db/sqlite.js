@@ -43,7 +43,7 @@ function init(dbPath) {
       votes=excluded.votes,
       url=excluded.url,
       last_updated=excluded.last_updated,
-      poster_processed=excluded.poster_processed,
+      poster_processed=COALESCE(excluded.poster_processed, poster_processed),
       raw=excluded.raw;
   `);
 

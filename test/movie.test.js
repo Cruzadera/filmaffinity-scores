@@ -9,6 +9,7 @@ const { init: initDb } = require("../src/db/sqlite");
 const repoRoot = path.join(__dirname, "..");
 const indexPath = path.join(repoRoot, "src", "index.js");
 const scraperPath = path.join(repoRoot, "src", "scraper", "filmaffinity.js");
+const ratingsServicePath = path.join(repoRoot, "src", "services", "ratingsService.js");
 
 // Use an isolated temp DB per test run so tests never interfere with real data
 const tmpDbPath = path.join(os.tmpdir(), `ratings-test-${Date.now()}.db`);
@@ -18,10 +19,12 @@ function resetDb() {
   if (fs.existsSync(tmpDbPath)) fs.unlinkSync(tmpDbPath);
   // Clear module cache so index.js re-initialises the DB
   delete require.cache[indexPath];
+  delete require.cache[ratingsServicePath];
 }
 
 function loadApp(mockGetFilmAffinityRating) {
   delete require.cache[indexPath];
+  delete require.cache[ratingsServicePath];
   delete require.cache[scraperPath];
 
   require.cache[scraperPath] = {
@@ -51,6 +54,7 @@ function startServer(app) {
 
 after(() => {
   delete require.cache[indexPath];
+  delete require.cache[ratingsServicePath];
   delete require.cache[scraperPath];
   if (fs.existsSync(tmpDbPath)) fs.unlinkSync(tmpDbPath);
 });
@@ -219,6 +223,89 @@ test("GET /movie returns 502 when the scraper errors", async (t) => {
   const json = await response.json();
   assert.equal(json.error, "Scraper error");
   assert.ok(json.message && json.message.includes("timeout"));
+});
+
+test("POST /ratings/batch returns 400 for invalid body", async (t) => {
+  resetDb();
+
+  const app = loadApp(async () => {
+    throw new Error("The scraper should not be called for invalid input");
+  });
+  const { server, baseUrl } = await startServer(app);
+
+  t.after(() => {
+    server.close();
+    resetDb();
+  });
+
+  const response = await fetch(`${baseUrl}/ratings/batch`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: 'Missing "items" array',
+  });
+});
+
+test("POST /ratings/batch returns per-item results", async (t) => {
+  resetDb();
+
+  const app = loadApp(async (title, year) => {
+    if (title === "alien" && year === "1979") {
+      return {
+        title: "Alien",
+        year: "1979",
+        rating: 8.1,
+        votes: "123456",
+        url: "https://www.filmaffinity.com/es/film123456.html",
+      };
+    }
+
+    if (title === "nope") {
+      return null;
+    }
+
+    throw new Error(`Unexpected title/year in test stub: ${title}/${year}`);
+  });
+  const { server, baseUrl } = await startServer(app);
+
+  t.after(() => {
+    server.close();
+    resetDb();
+  });
+
+  const response = await fetch(`${baseUrl}/ratings/batch`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      items: [
+        { title: "Alien", year: "1979" },
+        { title: "Nope", year: "2022" },
+        { title: "" },
+      ],
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  const payload = await response.json();
+  assert.equal(payload.count, 3);
+  assert.equal(payload.ok, 1);
+  assert.equal(payload.failed, 2);
+
+  assert.equal(payload.results[0].ok, true);
+  assert.equal(payload.results[0].source, "scraper");
+  assert.equal(payload.results[0].data.title, "Alien");
+
+  assert.equal(payload.results[1].ok, false);
+  assert.equal(payload.results[1].status, 404);
+  assert.equal(payload.results[1].error, "No result found");
+
+  assert.equal(payload.results[2].ok, false);
+  assert.equal(payload.results[2].status, 400);
+  assert.equal(payload.results[2].error, 'Missing "title" query parameter');
 });
 
 test("scoreSearchCandidate prioritizes the exact title and requested year", () => {

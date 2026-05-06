@@ -1,14 +1,10 @@
 {
   "name": "filmaffinity-scores",
   "version": "1.0.0",
-  "description": "API para obtener y cachear puntuaciones de FilmAffinity, integrable con Jellyfin y Jellyseer.",
+  "description": "API para obtener y cachear puntuaciones de FilmAffinity.",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "scheduler": "node scripts/scheduler.js",
-    "update-cache": "node src/scripts/updateCache.js",
-    "update-jellyfin": "node src/scripts/updateJellyfin.js",
-    "sync-jellyfin": "node scripts/sync-jellyfin.js",
     "test": "node --test"
   },
   "keywords": [

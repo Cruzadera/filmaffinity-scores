@@ -1,9 +1,3 @@
-# Docker usage
-
-Requirements: Docker and Docker Compose installed.
-
-How to build the image
-
 # Docker Guide
 
 ## Requirements
@@ -22,37 +16,25 @@ docker build -t filmaffinity-scores .
 1. Copy `.env.example` to `.env` and configure values.
 2. Start services.
 
-Full stack (API + scheduler):
+API service:
 
 ```bash
 docker compose up -d --build
 ```
 
-API only:
+Run worker/scheduler externally from https://github.com/Cruzadera/fa-jellyfin-sync.
 
-```bash
-docker compose up -d app
-```
-
-Scheduler only:
-
-```bash
-docker compose up -d scheduler
-```
-
-## Defined services
+## Defined service
 
 - `app`:
 	- Runs `npm start`
 	- Exposes port `8085` in the container
 	- Maps `${PORT:-8085}:8085` on the host
-- `scheduler`:
-	- Runs `node scripts/scheduler.js`
-	- Executes recurring `update-cache` + `sync-jellyfin` cycles
+	- Acts as the canonical ratings provider for external integrations
 
 ## Data persistence
 
-Both services mount:
+The service mounts:
 
 - `./data:/app/data`
 
@@ -71,30 +53,11 @@ See `.env.example` for full details.
 	- `LOG_LEVEL` (`debug|info|warn|error`)
 	- `DB_PATH` (default `data/ratings.db`)
 	- `CACHE_TTL` (seconds)
-- Jellyfin:
-	- `JELLYFIN_BASE_URL`
-	- `JELLYFIN_API_KEY`
-	- `JELLYFIN_AUTH_MODE` (`auto|header|query`)
-	- `JELLYFIN_TIMEOUT`
-- Sync:
-	- `SYNC_JELLYFIN_DRY_RUN`
-	- `SYNC_JELLYFIN_LIMIT`
-	- `SYNC_JELLYFIN_BATCH_SIZE`
-	- `SYNC_JELLYFIN_DELAY_MS`
-	- `SYNC_JELLYFIN_RETRIES`
-	- `SYNC_JELLYFIN_RETRY_DELAY`
-	- `SYNC_JELLYFIN_SET_CRITIC`
-	- `SYNC_JELLYFIN_FORCE`
-	- `SYNC_JELLYFIN_PAGE_SIZE`
-	- `SYNC_JELLYFIN_INCLUDE_ITEM_TYPES`
-- Poster processing:
-	- `ENABLE_POSTER_BADGES`
-	- `POSTER_BADGE_POSITION`
-	- `POSTER_BADGE_SIZE`
-	- `POSTER_PRESERVE_ORIGINAL`
-	- `POSTER_ORIGINALS_DIR`
-- Scraping:
+
+- Scraping/cache:
 	- `REQUEST_DELAY_MS`
+	- `RECENT_TTL_DAYS`
+	- `RECENT_YEARS`
 	- `DEBUG_SCREENSHOTS`
 	- `PUPPETEER_EXECUTABLE_PATH` (optional)
 
@@ -116,5 +79,4 @@ View logs:
 
 ```bash
 docker compose logs -f app
-docker compose logs -f scheduler
 ```

@@ -17,6 +17,19 @@ function isStale(entry, year, opts = {}) {
   return daysSince(entry.last_updated) > ttl;
 }
 
+function getTTLSeconds(year, opts = {}) {
+  // Determine defaults from environment to keep parity with updateCache.js
+  const defaultCacheTTLDays = process.env.CACHE_TTL
+    ? Math.round(Number(process.env.CACHE_TTL) / 86400)
+    : 30;
+  const cacheTTL = opts.cacheTTL !== undefined ? opts.cacheTTL : defaultCacheTTLDays;
+  const recentTTL = opts.recentTTL !== undefined ? opts.recentTTL : Number(process.env.RECENT_TTL_DAYS || 7);
+  const recentYears = opts.recentYears !== undefined ? opts.recentYears : Number(process.env.RECENT_YEARS || 2);
+
+  const days = computeTTLForYear(year, { cacheTTL, recentTTL, recentYears });
+  return Math.round(days * 86400);
+}
+
 function normalizeTitle(title) {
   return String(title || "")
     .normalize("NFD")
@@ -35,6 +48,10 @@ module.exports = {
   daysSince,
   computeTTLForYear,
   isStale,
+  getTTLSeconds,
   normalizeTitle,
   buildCacheKey,
 };
+
+
+

@@ -6,4 +6,5 @@ module.exports = {
   normalizeSearchText: scraper.normalizeSearchText,
   scoreSearchCandidate: scraper.scoreSearchCandidate,
   ScraperError: scraper.ScraperError,
+  restartBrowser: typeof scraper.restartBrowser === 'function' ? scraper.restartBrowser : undefined,
 };

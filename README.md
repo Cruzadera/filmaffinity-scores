@@ -1,4 +1,4 @@
-# FilmAffinity Scores (API + Jellyfin Sync)
+# FilmAffinity Scores API
 
 ![Node.js](https://img.shields.io/badge/Node.js-20.x-brightgreen?logo=node.js)
 ![Docker](https://img.shields.io/badge/Docker-ready-blue?logo=docker)
@@ -10,32 +10,27 @@ Node.js service for:
 1. Retrieving FilmAffinity ratings (Puppeteer-based scraping).
 2. Exposing ratings through a REST API.
 3. Persisting cache in SQLite.
-4. Syncing ratings into Jellyfin.
-5. Optionally rewriting posters in Jellyfin with a visual rating badge.
+4. Providing a stable HTTP contract for external integrations such as Jellyfin sync.
+5. Serving as API-only provider for external worker consumers.
 
-This is not only an API: it also includes batch workflows and a scheduler to keep your media library up to date.
+This repository is API-only. Worker execution is handled externally in https://github.com/Cruzadera/fa-jellyfin-sync
 
 ### What the project does today
 
 - HTTP API for movie lookup by title/year.
+- HTTP batch API contract for external integrations.
 - In-memory cache (node-cache) + persistent cache (data/ratings.db).
 - Scraper powered by puppeteer-extra + stealth plugin.
-- Jellyfin metadata sync (CommunityRating, optional CriticRating).
-- Poster badge processing and poster upload to Jellyfin.
-- Scheduler loop for automated updates.
 
 ### Quick architecture
 
 - npm start: starts the API (src/index.js).
-- npm run update-cache: scans Jellyfin library and refreshes SQLite cache.
-- npm run sync-jellyfin: syncs FilmAffinity ratings into Jellyfin.
-- npm run scheduler: infinite loop running update-cache + sync-jellyfin every cycle.
+- POST /ratings/batch is the main integration contract for an external Jellyfin sync worker.
 
 ### Requirements
 
 - Node.js 20+
-- Access to a Jellyfin instance (for sync/scheduler workflows)
-- JELLYFIN_API_KEY with read/update permissions
+- Access/network to this API from your external worker deployment
 
 ### Installation
 
@@ -68,6 +63,57 @@ Endpoints:
   - title is required
   - year is optional
 - GET /health
+- POST /ratings/batch
+  - Content-Type: application/json
+  - body: { "items": [{ "title": "Alien", "year": "1979" }, ...] }
+  - title is required per item
+  - year is optional per item (if present, must be 4 digits)
+  - returns per-item status and data/error (partial success supported)
+
+Batch example:
+
+```bash
+curl -X POST "http://localhost:8085/ratings/batch" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "items": [
+      { "title": "Alien", "year": "1979" },
+      { "title": "Blade Runner", "year": "1982" },
+      { "title": "Unknown Movie" }
+    ]
+  }'
+```
+
+Typical batch response:
+
+```json
+{
+  "count": 3,
+  "ok": 2,
+  "failed": 1,
+  "results": [
+    {
+      "ok": true,
+      "status": 200,
+      "source": "db",
+      "input": { "title": "alien", "year": "1979" },
+      "data": {
+        "title": "Alien",
+        "year": "1979",
+        "rating": 8.1,
+        "votes": "123456",
+        "url": "https://www.filmaffinity.com/es/film123456.html"
+      }
+    },
+    {
+      "ok": false,
+      "status": 404,
+      "error": "No result found",
+      "input": { "title": "unknown movie", "year": null }
+    }
+  ]
+}
+```
 
 Example:
 
@@ -87,57 +133,11 @@ Typical response:
 }
 ```
 
-### Jellyfin sync
+### External worker
 
-Recommended command:
+Worker/scheduler logic is out of scope for this repository and lives in:
 
-```bash
-npm run sync-jellyfin
-```
-
-Default mode is dry-run (SYNC_JELLYFIN_DRY_RUN=true), so changes are computed but not applied.
-
-Dry-run sample:
-
-```bash
-LOG_LEVEL=debug \
-SYNC_JELLYFIN_DRY_RUN=true \
-node scripts/sync-jellyfin.js --limit=5 --batch-size=2
-```
-
-Apply real updates:
-
-```bash
-LOG_LEVEL=debug \
-SYNC_JELLYFIN_DRY_RUN=false \
-node scripts/sync-jellyfin.js --limit=20 --batch-size=2
-```
-
-Sync and process poster badges:
-
-```bash
-LOG_LEVEL=debug \
-SYNC_JELLYFIN_DRY_RUN=false \
-ENABLE_POSTER_BADGES=true \
-POSTER_BADGE_POSITION=top-right \
-POSTER_BADGE_SIZE=0.2 \
-node scripts/sync-jellyfin.js --limit=20 --batch-size=2
-```
-
-### Automatic scheduler
-
-```bash
-npm run scheduler
-```
-
-Cycle:
-
-1. Runs update-cache
-2. Runs sync-jellyfin
-3. Waits SLEEP_SECONDS (default 86400)
-4. Repeats forever
-
-Set SYNC_JELLYFIN_FORCE_ON_STARTUP=true to force the first sync pass.
+- https://github.com/Cruzadera/fa-jellyfin-sync
 
 ### Environment variables (summary)
 
@@ -147,25 +147,23 @@ See .env.example for full details.
   - PORT (default 8085)
   - LOG_LEVEL (debug|info|warn|error, default info)
   - DB_PATH (default data/ratings.db)
-  - CACHE_TTL in seconds (default 86400)
+  - BATCH_MAX_ITEMS (default 100) — max items accepted by POST /ratings/batch
+  - CACHE_TTL in seconds (default 86400) — canonical value for the in-memory
+    cache (node-cache). This takes precedence if set. The updater derives its
+    day-based defaults from this value and from the `RECENT_*` settings.
+
+  - RECENT_TTL_DAYS (default 7) — TTL in days applied to recent releases (they
+    are refreshed more often).
+  - RECENT_YEARS (default 2) — how many years are considered "recent".
+
+Quick notes:
+- The API process configures NodeCache with a global `CACHE_TTL` (seconds), but
+  entries are set with per-entry TTLs based on movie year so recent movies are
+  refreshed more often while older movies are cached longer.
+ 
 - Jellyfin:
-  - JELLYFIN_BASE_URL
-  - JELLYFIN_API_KEY
-  - JELLYFIN_AUTH_MODE (auto|header|query)
-  - JELLYFIN_TIMEOUT
-- Sync:
-  - SYNC_JELLYFIN_DRY_RUN, SYNC_JELLYFIN_LIMIT, SYNC_JELLYFIN_BATCH_SIZE
-  - SYNC_JELLYFIN_DELAY_MS, SYNC_JELLYFIN_RETRIES, SYNC_JELLYFIN_RETRY_DELAY
-  - SYNC_JELLYFIN_SET_CRITIC, SYNC_JELLYFIN_FORCE, SYNC_JELLYFIN_PAGE_SIZE
-  - SYNC_JELLYFIN_INCLUDE_ITEM_TYPES
-- Poster processing:
-  - ENABLE_POSTER_BADGES
-  - POSTER_BADGE_POSITION
-  - POSTER_BADGE_SIZE
-  - POSTER_PRESERVE_ORIGINAL
-  - POSTER_ORIGINALS_DIR
-  - POSTER_BADGE_DRY_RUN / POSTER_BADGE_FORCE
-- Scraping/incremental cache:
+  - Not used by this API-only repository.
+- Scraping/cache:
   - REQUEST_DELAY_MS
   - RECENT_TTL_DAYS
   - RECENT_YEARS
@@ -173,10 +171,9 @@ See .env.example for full details.
 
 ### Docker
 
-Two services are defined in docker-compose.yml:
+One service is defined in docker-compose.yml:
 
-- app: REST API
-- scheduler: automatic cache + sync cycle
+- app: REST API and canonical ratings provider
 
 Start full stack:
 
@@ -184,13 +181,7 @@ Start full stack:
 docker compose up -d --build
 ```
 
-Start scheduler only:
-
-```bash
-docker compose up -d scheduler
-```
-
-The ./data:/app/data volume persists SQLite and poster backups.
+The ./data:/app/data volume persists SQLite data.
 
 ### Tests
 
@@ -201,6 +192,7 @@ npm test
 ### Notes
 
 - Scraping can break if FilmAffinity changes HTML or anti-bot behavior.
+- The main contract to preserve is `POST /ratings/batch`; it is intended to survive the Jellyfin split.
 - Jellyfin updates depend on API key permissions.
 - In production, validate with dry-run before enabling write mode.
 
