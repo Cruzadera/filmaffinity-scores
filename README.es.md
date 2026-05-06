@@ -1,4 +1,4 @@
-# FilmAffinity Scores (API + Jellyfin Sync)
+# FilmAffinity Scores API
 
 ![Node.js](https://img.shields.io/badge/Node.js-20.x-brightgreen?logo=node.js)
 ![Docker](https://img.shields.io/badge/Docker-ready-blue?logo=docker)
@@ -9,32 +9,26 @@ Servicio Node.js para:
 1. Consultar valoraciones de FilmAffinity (scraping con Puppeteer).
 2. Exponerlas vía API REST.
 3. Guardarlas en caché persistente (SQLite).
-4. Sincronizar ratings en Jellyfin.
-5. Opcionalmente reescribir pósters en Jellyfin con badge visual de nota.
+4. Publicar un contrato HTTP estable para consumidores externos.
 
-No es solo una API: también incluye un flujo batch y un scheduler para mantener la librería actualizada.
+Este repositorio es API-only. El worker externo vive en:
+https://github.com/Cruzadera/fa-jellyfin-sync
 
 ### Qué hace hoy el proyecto
 
 - API HTTP para consultar una película por título/año.
 - Caché en memoria (node-cache) + caché persistente (data/ratings.db).
 - Scraper con puppeteer-extra + stealth plugin.
-- Sincronización de metadatos en Jellyfin (CommunityRating, opcional CriticRating).
-- Procesamiento de póster y subida de imagen a Jellyfin.
-- Scheduler para ejecutar ciclos automáticos de actualización.
 
 ### Arquitectura rápida
 
 - npm start: levanta la API (src/index.js).
-- npm run update-cache: recorre la librería de Jellyfin y refresca caché en SQLite.
-- npm run sync-jellyfin: sincroniza ratings FilmAffinity -> Jellyfin.
-- npm run scheduler: bucle continuo que ejecuta update-cache + sync-jellyfin en cada ciclo.
+- POST /ratings/batch: contrato principal para worker externo.
 
 ### Requisitos
 
 - Node.js 20+
-- Acceso a una instancia de Jellyfin (si vas a usar sync/scheduler)
-- JELLYFIN_API_KEY con permisos para leer y actualizar metadata
+- Acceso de red al endpoint API desde tu worker externo
 
 ### Instalación
 
@@ -67,6 +61,12 @@ Endpoints:
   - title obligatorio
   - year opcional
 - GET /health
+- POST /ratings/batch
+  - Content-Type: application/json
+  - body: { "items": [{ "title": "Alien", "year": "1979" }, ...] }
+  - title obligatorio por item
+  - year opcional por item (si existe, 4 dígitos)
+  - respuesta con estado por item (éxito/error parcial)
 
 Ejemplo:
 
@@ -86,57 +86,12 @@ Respuesta típica:
 }
 ```
 
-### Sincronización con Jellyfin
+### Worker externo
 
-Script recomendado:
+Este repositorio no ejecuta scheduler/sync locales.
+Usa el worker externo en:
 
-```bash
-npm run sync-jellyfin
-```
-
-Por defecto corre en dry-run (SYNC_JELLYFIN_DRY_RUN=true): calcula cambios pero no los aplica.
-
-Prueba controlada:
-
-```bash
-LOG_LEVEL=debug \
-SYNC_JELLYFIN_DRY_RUN=true \
-node scripts/sync-jellyfin.js --limit=5 --batch-size=2
-```
-
-Aplicar cambios reales:
-
-```bash
-LOG_LEVEL=debug \
-SYNC_JELLYFIN_DRY_RUN=false \
-node scripts/sync-jellyfin.js --limit=20 --batch-size=2
-```
-
-Sincronizar también pósters con badge:
-
-```bash
-LOG_LEVEL=debug \
-SYNC_JELLYFIN_DRY_RUN=false \
-ENABLE_POSTER_BADGES=true \
-POSTER_BADGE_POSITION=top-right \
-POSTER_BADGE_SIZE=0.2 \
-node scripts/sync-jellyfin.js --limit=20 --batch-size=2
-```
-
-### Scheduler automático
-
-```bash
-npm run scheduler
-```
-
-Ciclo:
-
-1. Ejecuta update-cache
-2. Ejecuta sync-jellyfin
-3. Espera SLEEP_SECONDS (default 86400)
-4. Repite en bucle
-
-SYNC_JELLYFIN_FORCE_ON_STARTUP=true permite forzar la primera pasada.
+- https://github.com/Cruzadera/fa-jellyfin-sync
 
 ### Variables de entorno (resumen)
 
@@ -156,28 +111,8 @@ Consulta .env.example para lista completa.
   - RECENT_YEARS (default 2) — número de años que se consideran "recientes".
 
 Notas rápidas:
-- La lógica de refresco del scheduler (`update-cache.js`) y la comprobación de
-  stale en la base de datos se basan en `RECENT_TTL_DAYS`/`RECENT_YEARS` (días).
-- La API usa `CACHE_TTL` (segundos) para la configuración global, pero ahora la
-  aplicación aplica TTL por entrada (según el año de la película) para que las
-  películas recientes se actualicen con más frecuencia y las antiguas menos.
-- Jellyfin:
-  - JELLYFIN_BASE_URL
-  - JELLYFIN_API_KEY
-  - JELLYFIN_AUTH_MODE (auto|header|query)
-  - JELLYFIN_TIMEOUT
-- Sync:
-  - SYNC_JELLYFIN_DRY_RUN, SYNC_JELLYFIN_LIMIT, SYNC_JELLYFIN_BATCH_SIZE
-  - SYNC_JELLYFIN_DELAY_MS, SYNC_JELLYFIN_RETRIES, SYNC_JELLYFIN_RETRY_DELAY
-  - SYNC_JELLYFIN_SET_CRITIC, SYNC_JELLYFIN_FORCE, SYNC_JELLYFIN_PAGE_SIZE
-  - SYNC_JELLYFIN_INCLUDE_ITEM_TYPES
-- Pósters:
-  - ENABLE_POSTER_BADGES
-  - POSTER_BADGE_POSITION
-  - POSTER_BADGE_SIZE
-  - POSTER_PRESERVE_ORIGINAL
-  - POSTER_ORIGINALS_DIR
-  - POSTER_BADGE_DRY_RUN / POSTER_BADGE_FORCE
+- La API usa `CACHE_TTL` (segundos) como TTL canónico de caché en memoria.
+- El cálculo de TTL por año se ajusta con `RECENT_TTL_DAYS`/`RECENT_YEARS`.
 - Scraping/cache incremental:
   - REQUEST_DELAY_MS
   - RECENT_TTL_DAYS
@@ -186,10 +121,9 @@ Notas rápidas:
 
 ### Docker
 
-En docker-compose.yml hay dos servicios:
+En docker-compose.yml hay un servicio:
 
 - app: API REST
-- scheduler: ciclo automático cache + sync
 
 Arrancar stack completo:
 
@@ -197,13 +131,7 @@ Arrancar stack completo:
 docker compose up -d --build
 ```
 
-Solo scheduler:
-
-```bash
-docker compose up -d scheduler
-```
-
-El volumen ./data:/app/data persiste SQLite y backups de pósters.
+El volumen ./data:/app/data persiste SQLite.
 
 ### Tests
 
@@ -214,8 +142,7 @@ npm test
 ### Notas
 
 - El scraping puede romperse si FilmAffinity cambia HTML o anti-bot.
-- Las actualizaciones en Jellyfin dependen de permisos del API key.
-- En producción, empezar en dry-run y luego pasar a modo escritura.
+- Mantén estable el contrato `POST /ratings/batch` para el worker externo.
 
 ## Disclaimer
 

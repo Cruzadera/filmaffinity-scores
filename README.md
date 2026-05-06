@@ -11,9 +11,9 @@ Node.js service for:
 2. Exposing ratings through a REST API.
 3. Persisting cache in SQLite.
 4. Providing a stable HTTP contract for external integrations such as Jellyfin sync.
-5. Keeping a transitional in-repo Jellyfin compatibility flow while the integration is extracted.
+5. Serving as API-only provider for external worker consumers.
 
-This is in transition to an API-first architecture. Jellyfin sync still exists in this repository for compatibility, but the recommended worker path is now the external repository: https://github.com/Cruzadera/fa-jellyfin-sync
+This repository is API-only. Worker execution is handled externally in https://github.com/Cruzadera/fa-jellyfin-sync
 
 ### What the project does today
 
@@ -21,21 +21,16 @@ This is in transition to an API-first architecture. Jellyfin sync still exists i
 - HTTP batch API contract for external integrations.
 - In-memory cache (node-cache) + persistent cache (data/ratings.db).
 - Scraper powered by puppeteer-extra + stealth plugin.
-- Transitional Jellyfin metadata sync compatibility flow.
-- Transitional poster badge processing and poster upload for Jellyfin.
-- Transitional scheduler loop for compatibility during the split.
 
 ### Quick architecture
 
 - npm start: starts the API (src/index.js).
 - POST /ratings/batch is the main integration contract for an external Jellyfin sync worker.
-- npm run update-cache, npm run sync-jellyfin and npm run scheduler remain available as legacy compatibility tooling during the split.
 
 ### Requirements
 
 - Node.js 20+
-- Access to a Jellyfin instance only if you still use the transitional sync/scheduler tooling
-- JELLYFIN_API_KEY with read/update permissions only for the transitional sync flow
+- Access/network to this API from your external worker deployment
 
 ### Installation
 
@@ -138,79 +133,11 @@ Typical response:
 }
 ```
 
-### Jellyfin sync
+### External worker
 
-This section describes the transitional compatibility flow that still lives in this repository. The long-term target is to move this worker into a separate repository that consumes the API.
+Worker/scheduler logic is out of scope for this repository and lives in:
 
-Recommended path: use the external worker repo https://github.com/Cruzadera/fa-jellyfin-sync against this API.
-Transitional path: keep using local legacy scripts in this repository.
-
-Recommended command:
-
-```bash
-npm run sync-jellyfin
-# Equivalent legacy alias:
-# npm run legacy:sync-jellyfin
-```
-
-Default mode is dry-run (SYNC_JELLYFIN_DRY_RUN=true), so changes are computed but not applied.
-
-By default, ratings are resolved with the local scraper. You can switch sync to API-client mode so it consumes `POST /ratings/batch` instead:
-
-```bash
-LOG_LEVEL=debug \
-SYNC_JELLYFIN_DRY_RUN=true \
-SYNC_RATINGS_API_URL=http://localhost:8085 \
-node scripts/sync-jellyfin.js --limit=20 --batch-size=5
-```
-
-When using Docker Compose, the `scheduler` service now points to `http://app:8085` by default so the sync path consumes the local API instead of scraping directly.
-
-Dry-run sample:
-
-```bash
-LOG_LEVEL=debug \
-SYNC_JELLYFIN_DRY_RUN=true \
-node scripts/sync-jellyfin.js --limit=5 --batch-size=2
-```
-
-Apply real updates:
-
-```bash
-LOG_LEVEL=debug \
-SYNC_JELLYFIN_DRY_RUN=false \
-node scripts/sync-jellyfin.js --limit=20 --batch-size=2
-```
-
-Sync and process poster badges:
-
-```bash
-LOG_LEVEL=debug \
-SYNC_JELLYFIN_DRY_RUN=false \
-ENABLE_POSTER_BADGES=true \
-POSTER_BADGE_POSITION=top-right \
-POSTER_BADGE_SIZE=0.2 \
-node scripts/sync-jellyfin.js --limit=20 --batch-size=2
-```
-
-### Automatic scheduler
-
-The scheduler is now considered a compatibility bridge. In Compose mode it is wired to use the API contract first, which mirrors how the future external Jellyfin worker will behave.
-
-```bash
-npm run scheduler
-# Equivalent legacy alias:
-# npm run legacy:scheduler
-```
-
-Cycle:
-
-1. Runs update-cache
-2. Runs sync-jellyfin
-3. Waits SLEEP_SECONDS (default 86400)
-4. Repeats forever
-
-Set SYNC_JELLYFIN_FORCE_ON_STARTUP=true to force the first sync pass.
+- https://github.com/Cruzadera/fa-jellyfin-sync
 
 ### Environment variables (summary)
 
@@ -230,34 +157,13 @@ See .env.example for full details.
   - RECENT_YEARS (default 2) — how many years are considered "recent".
 
 Quick notes:
-- The scheduler / updater (`update-cache.js`) uses day-based TTL logic
-  (`RECENT_TTL_DAYS` / `RECENT_YEARS`) to determine when database entries are
-  stale and should be refreshed.
 - The API process configures NodeCache with a global `CACHE_TTL` (seconds), but
-  the code now sets per-entry TTLs based on movie year so recent movies are
+  entries are set with per-entry TTLs based on movie year so recent movies are
   refreshed more often while older movies are cached longer.
  
 - Jellyfin:
-  - JELLYFIN_BASE_URL
-  - JELLYFIN_API_KEY
-  - JELLYFIN_AUTH_MODE (auto|header|query)
-  - JELLYFIN_TIMEOUT
-- Sync:
-  - SYNC_JELLYFIN_DRY_RUN, SYNC_JELLYFIN_LIMIT, SYNC_JELLYFIN_BATCH_SIZE
-  - SYNC_JELLYFIN_DELAY_MS, SYNC_JELLYFIN_RETRIES, SYNC_JELLYFIN_RETRY_DELAY
-  - SYNC_JELLYFIN_SET_CRITIC, SYNC_JELLYFIN_FORCE, SYNC_JELLYFIN_PAGE_SIZE
-  - SYNC_JELLYFIN_INCLUDE_ITEM_TYPES
-  - SYNC_RATINGS_API_URL (if set, sync uses API batch mode instead of local scraper)
-  - SYNC_RATINGS_API_BATCH_SIZE, SYNC_RATINGS_API_TIMEOUT_MS
-  - SYNC_RATINGS_API_KEY, SYNC_RATINGS_API_USE_KEY_HEADER
-- Poster processing:
-  - ENABLE_POSTER_BADGES
-  - POSTER_BADGE_POSITION
-  - POSTER_BADGE_SIZE
-  - POSTER_PRESERVE_ORIGINAL
-  - POSTER_ORIGINALS_DIR
-  - POSTER_BADGE_DRY_RUN / POSTER_BADGE_FORCE
-- Scraping/incremental cache:
+  - Not used by this API-only repository.
+- Scraping/cache:
   - REQUEST_DELAY_MS
   - RECENT_TTL_DAYS
   - RECENT_YEARS
@@ -265,12 +171,9 @@ Quick notes:
 
 ### Docker
 
-Two services are defined in docker-compose.yml:
+One service is defined in docker-compose.yml:
 
 - app: REST API and canonical ratings provider
-- scheduler: transitional compatibility worker wired to consume the API by default
-
-For production migration, prefer running the external worker and keep this scheduler only as legacy bridge.
 
 Start full stack:
 
@@ -278,13 +181,7 @@ Start full stack:
 docker compose up -d --build
 ```
 
-Start scheduler only:
-
-```bash
-docker compose up -d scheduler
-```
-
-The ./data:/app/data volume persists SQLite and poster backups.
+The ./data:/app/data volume persists SQLite data.
 
 ### Tests
 

@@ -10,20 +10,3 @@ services:
       - ./data:/app/data
     restart: unless-stopped
     shm_size: '1gb'
-  # Transitional legacy bridge. Recommended long-term path:
-  # run external worker https://github.com/Cruzadera/fa-jellyfin-sync against app.
-  scheduler:
-    build:
-      context: .
-    depends_on:
-      - app
-    env_file:
-      - .env
-    environment:
-      SYNC_RATINGS_API_URL: ${SYNC_RATINGS_API_URL:-http://app:8085}
-      SYNC_RATINGS_API_KEY: ${SYNC_RATINGS_API_KEY:-}
-      SYNC_RATINGS_API_USE_KEY_HEADER: ${SYNC_RATINGS_API_USE_KEY_HEADER:-false}
-    volumes:
-      - ./data:/app/data
-    restart: unless-stopped
-    command: node scripts/scheduler.js
