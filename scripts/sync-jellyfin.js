@@ -6,6 +6,7 @@ const path = require('path');
 const logger = require('../src/logging');
 const { init: initDb } = require('../src/db/sqlite');
 const JellyfinClient = require('../src/services/jellyfinClient');
+const RatingsApiClient = require('../src/services/ratingsApiClient');
 const { fetchMoviesIterator } = require('../src/services/jellyfinLibrary');
 const { getFilmAffinityRating } = require('../src/scraper/filmaffinity');
 const { updateMovieMetadata } = require('../src/services/jellyfinUpdater');
@@ -75,51 +76,8 @@ function getMovieLookup(movie) {
   return { title, year, cacheKey };
 }
 
-function normalizeApiBaseUrl(url) {
-  return String(url || '').trim().replace(/\/+$/, '');
-}
-
-function buildBatchEndpoint(baseUrl) {
-  return `${normalizeApiBaseUrl(baseUrl)}/ratings/batch`;
-}
-
-async function fetchRatingsBatchChunkFromApi(apiBaseUrl, lookupChunk, timeoutMs) {
-  const endpoint = buildBatchEndpoint(apiBaseUrl);
-  const body = {
-    items: lookupChunk.map(({ title, year }) => ({
-      title,
-      year: year || undefined,
-    })),
-  };
-
-  const res = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-
-  const payload = await res.json().catch(() => null);
-  if (!res.ok) {
-    const message = payload && payload.error
-      ? payload.error
-      : `HTTP ${res.status} calling ${endpoint}`;
-    throw new Error(`Ratings API error: ${message}`);
-  }
-
-  if (!payload || !Array.isArray(payload.results)) {
-    throw new Error('Ratings API contract error: missing "results" array');
-  }
-
-  if (payload.results.length !== lookupChunk.length) {
-    throw new Error(`Ratings API contract error: expected ${lookupChunk.length} results, received ${payload.results.length}`);
-  }
-
-  return payload.results;
-}
-
 async function resolveBatchRatings(lookups, opts) {
-  if (!opts.ratingsApiUrl) return null;
+  if (!opts.ratingsApiUrl || !opts.ratingsApiClient) return null;
 
   const chunkSize = Math.max(1, opts.ratingsApiBatchSize || 50);
   const out = [];
@@ -127,10 +85,15 @@ async function resolveBatchRatings(lookups, opts) {
   for (let i = 0; i < lookups.length; i += chunkSize) {
     const chunk = lookups.slice(i, i + chunkSize);
     const chunkResults = await retry(
-      () => fetchRatingsBatchChunkFromApi(opts.ratingsApiUrl, chunk, opts.ratingsApiTimeoutMs),
+      () => opts.ratingsApiClient.getRatingsBatch({
+        items: chunk.map(({ title, year }) => ({ title, year: year || undefined })),
+      }),
       opts.retries,
       opts.retryDelay
     );
+    if (!Array.isArray(chunkResults) || chunkResults.length !== chunk.length) {
+      throw new Error(`Ratings API contract error: expected ${chunk.length} results, received ${Array.isArray(chunkResults) ? chunkResults.length : 0}`);
+    }
     out.push(...chunkResults);
   }
 
@@ -144,6 +107,9 @@ async function retry(fn, attempts = 3, delay = 1000) {
       return await fn();
     } catch (err) {
       lastErr = err;
+      if (err && err.retryable === false) {
+        throw err;
+      }
       const backoff = delay * Math.pow(2, i);
       logger.warn(`Attempt ${i + 1} failed, retrying in ${backoff}ms: ${err && err.message ? err.message : err}`);
       await sleep(backoff);
@@ -311,7 +277,7 @@ async function main(argv = process.argv) {
     force: toBool(args.force, toBool(process.env.SYNC_JELLYFIN_FORCE, false)),
     pageSize: toInt(args['page-size'] || process.env.SYNC_JELLYFIN_PAGE_SIZE, 100),
     includeItemTypes: args['include-item-types'] || process.env.SYNC_JELLYFIN_INCLUDE_ITEM_TYPES || 'Movie',
-    ratingsApiUrl: normalizeApiBaseUrl(args['ratings-api-url'] || process.env.SYNC_RATINGS_API_URL || ''),
+    ratingsApiUrl: String(args['ratings-api-url'] || process.env.SYNC_RATINGS_API_URL || '').trim().replace(/\/+$/, ''),
     ratingsApiBatchSize: toInt(args['ratings-api-batch-size'] || process.env.SYNC_RATINGS_API_BATCH_SIZE, 50),
     ratingsApiTimeoutMs: toInt(args['ratings-api-timeout-ms'] || process.env.SYNC_RATINGS_API_TIMEOUT_MS, 30000),
     enablePosterBadges: toBool(args['enable-poster-badges'], toBool(process.env.ENABLE_POSTER_BADGES, false)),
@@ -327,6 +293,16 @@ async function main(argv = process.argv) {
   const dbPath = process.env.DB_PATH || DEFAULT_DB_PATH;
   const db = initDb(dbPath);
   opts.db = db;
+  if (opts.ratingsApiUrl) {
+    opts.ratingsApiClient = new RatingsApiClient({
+      baseUrl: opts.ratingsApiUrl,
+      timeoutMs: opts.ratingsApiTimeoutMs,
+      retries: opts.retries,
+      retryDelayMs: opts.retryDelay,
+      apiKey: process.env.SYNC_RATINGS_API_KEY || '',
+      useApiKeyHeader: process.env.SYNC_RATINGS_API_USE_KEY_HEADER,
+    });
+  }
 
   const client = new JellyfinClient({
     baseUrl: process.env.JELLYFIN_BASE_URL,
@@ -388,3 +364,8 @@ if (require.main === module) {
 }
 
 module.exports = main;
+module.exports.__internals = {
+  resolveBatchRatings,
+  retry,
+  getMovieLookup,
+};

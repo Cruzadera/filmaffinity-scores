@@ -13,7 +13,7 @@ Node.js service for:
 4. Providing a stable HTTP contract for external integrations such as Jellyfin sync.
 5. Keeping a transitional in-repo Jellyfin compatibility flow while the integration is extracted.
 
-This is in transition to an API-first architecture. Jellyfin sync still exists in this repository for compatibility, but the integration is being separated into an external consumer service.
+This is in transition to an API-first architecture. Jellyfin sync still exists in this repository for compatibility, but the recommended worker path is now the external repository: https://github.com/Cruzadera/fa-jellyfin-sync
 
 ### What the project does today
 
@@ -29,7 +29,7 @@ This is in transition to an API-first architecture. Jellyfin sync still exists i
 
 - npm start: starts the API (src/index.js).
 - POST /ratings/batch is the main integration contract for an external Jellyfin sync worker.
-- npm run update-cache, npm run sync-jellyfin and npm run scheduler remain available as compatibility tooling during the split.
+- npm run update-cache, npm run sync-jellyfin and npm run scheduler remain available as legacy compatibility tooling during the split.
 
 ### Requirements
 
@@ -142,10 +142,15 @@ Typical response:
 
 This section describes the transitional compatibility flow that still lives in this repository. The long-term target is to move this worker into a separate repository that consumes the API.
 
+Recommended path: use the external worker repo https://github.com/Cruzadera/fa-jellyfin-sync against this API.
+Transitional path: keep using local legacy scripts in this repository.
+
 Recommended command:
 
 ```bash
 npm run sync-jellyfin
+# Equivalent legacy alias:
+# npm run legacy:sync-jellyfin
 ```
 
 Default mode is dry-run (SYNC_JELLYFIN_DRY_RUN=true), so changes are computed but not applied.
@@ -194,6 +199,8 @@ The scheduler is now considered a compatibility bridge. In Compose mode it is wi
 
 ```bash
 npm run scheduler
+# Equivalent legacy alias:
+# npm run legacy:scheduler
 ```
 
 Cycle:
@@ -242,6 +249,7 @@ Quick notes:
   - SYNC_JELLYFIN_INCLUDE_ITEM_TYPES
   - SYNC_RATINGS_API_URL (if set, sync uses API batch mode instead of local scraper)
   - SYNC_RATINGS_API_BATCH_SIZE, SYNC_RATINGS_API_TIMEOUT_MS
+  - SYNC_RATINGS_API_KEY, SYNC_RATINGS_API_USE_KEY_HEADER
 - Poster processing:
   - ENABLE_POSTER_BADGES
   - POSTER_BADGE_POSITION
@@ -261,6 +269,8 @@ Two services are defined in docker-compose.yml:
 
 - app: REST API and canonical ratings provider
 - scheduler: transitional compatibility worker wired to consume the API by default
+
+For production migration, prefer running the external worker and keep this scheduler only as legacy bridge.
 
 Start full stack:
 

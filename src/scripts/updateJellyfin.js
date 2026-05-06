@@ -4,6 +4,7 @@ dotenv.config();
 const path = require('path');
 const { init: initDb } = require('../db/sqlite');
 const JellyfinClient = require('../services/jellyfinClient');
+const RatingsApiClient = require('../services/ratingsApiClient');
 const { fetchMoviesIterator } = require('../services/jellyfinLibrary');
 const { getFilmAffinityRating } = require('../scraper/filmaffinity');
 const { updateMovieMetadata } = require('../services/jellyfinUpdater');
@@ -12,6 +13,13 @@ const { processMoviePoster } = require('../services/posterProcessor');
 const logger = require('../logging');
 
 const DEFAULT_DB_PATH = path.join(__dirname, '../../data/ratings.db');
+
+async function resolveRatingForMovie({ title, year, ratingsApiClient, scraperFn = getFilmAffinityRating }) {
+  if (ratingsApiClient) {
+    return ratingsApiClient.getRating({ title, year });
+  }
+  return scraperFn(title, year);
+}
 
 async function main() {
   const dryRun = process.env.UPDATE_JELLYFIN_DRY_RUN !== 'false'; // default true
@@ -29,6 +37,18 @@ async function main() {
   });
 
   const dbPath = process.env.DB_PATH || DEFAULT_DB_PATH;
+  const ratingsApiUrl = String(process.env.SYNC_RATINGS_API_URL || '').trim().replace(/\/+$/, '');
+  const ratingsApiClient = ratingsApiUrl
+    ? new RatingsApiClient({
+      baseUrl: ratingsApiUrl,
+      timeoutMs: Number(process.env.SYNC_RATINGS_API_TIMEOUT_MS || 30000),
+      retries: Number(process.env.SYNC_JELLYFIN_RETRIES || 3),
+      retryDelayMs: Number(process.env.SYNC_JELLYFIN_RETRY_DELAY || 1000),
+      apiKey: process.env.SYNC_RATINGS_API_KEY || '',
+      useApiKeyHeader: process.env.SYNC_RATINGS_API_USE_KEY_HEADER,
+    })
+    : null;
+
   const db = initDb(dbPath);
   try {
     const pageSize = Number(process.env.UPDATE_JELLYFIN_PAGE_SIZE || 50);
@@ -41,7 +61,7 @@ async function main() {
         const cacheKey = buildCacheKey(title, year);
         logger.info(`Processing: ${title} (${year || 'unknown'}) [${movie.id}]`);
 
-        const fa = await getFilmAffinityRating(title, year);
+        const fa = await resolveRatingForMovie({ title, year, ratingsApiClient });
         if (!fa) {
           logger.info(`No FilmAffinity rating for ${title}`);
           continue;
@@ -106,3 +126,6 @@ if (require.main === module) {
 }
 
 module.exports = main;
+module.exports.__internals = {
+  resolveRatingForMovie,
+};

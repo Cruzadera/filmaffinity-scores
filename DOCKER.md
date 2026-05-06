@@ -40,6 +40,9 @@ Scheduler only:
 docker compose up -d scheduler
 ```
 
+Recommended migration path: run this repository as API provider and run the external worker from https://github.com/Cruzadera/fa-jellyfin-sync.
+Legacy transitional path: keep `scheduler` in this compose stack during migration.
+
 Note: in Compose mode, `scheduler` is configured to call `http://app:8085/ratings/batch` by default through `SYNC_RATINGS_API_URL`. This keeps the worker aligned with the future split where Jellyfin sync will live outside this repository.
 
 ## Defined services
@@ -53,6 +56,7 @@ Note: in Compose mode, `scheduler` is configured to call `http://app:8085/rating
 	- Runs `node scripts/scheduler.js`
 	- Executes recurring `update-cache` + `sync-jellyfin` cycles
 	- Consumes the API service by default via `SYNC_RATINGS_API_URL=http://app:8085`
+	- Marked as transitional legacy bridge (do not remove yet)
 
 ## Data persistence
 
@@ -94,6 +98,8 @@ See `.env.example` for full details.
 	- `SYNC_RATINGS_API_URL`
 	- `SYNC_RATINGS_API_BATCH_SIZE`
 	- `SYNC_RATINGS_API_TIMEOUT_MS`
+	- `SYNC_RATINGS_API_KEY`
+	- `SYNC_RATINGS_API_USE_KEY_HEADER`
 - Poster processing:
 	- `ENABLE_POSTER_BADGES`
 	- `POSTER_BADGE_POSITION`

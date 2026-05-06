@@ -6,9 +6,13 @@
   "scripts": {
     "start": "node src/index.js",
     "scheduler": "node scripts/scheduler.js",
+    "legacy:scheduler": "node scripts/scheduler.js",
     "update-cache": "node src/scripts/updateCache.js",
+    "legacy:update-cache": "node src/scripts/updateCache.js",
     "update-jellyfin": "node src/scripts/updateJellyfin.js",
+    "legacy:update-jellyfin": "node src/scripts/updateJellyfin.js",
     "sync-jellyfin": "node scripts/sync-jellyfin.js",
+    "legacy:sync-jellyfin": "node scripts/sync-jellyfin.js",
     "test": "node --test"
   },
   "keywords": [

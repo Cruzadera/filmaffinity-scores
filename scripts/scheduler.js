@@ -74,9 +74,9 @@ async function main() {
   const ratingsApiUrl = normalizeUrl(process.env.SYNC_RATINGS_API_URL);
 
   if (ratingsApiUrl) {
-    logger.info(`Scheduler will resolve ratings through API mode (${ratingsApiUrl})`);
+    logger.info(`Scheduler (legacy bridge) will resolve ratings through API mode (${ratingsApiUrl})`);
   } else {
-    logger.warn('Scheduler is running without SYNC_RATINGS_API_URL; sync-jellyfin will use the local scraper compatibility path');
+    logger.warn('Scheduler is running without SYNC_RATINGS_API_URL; sync-jellyfin will use the local scraper compatibility path (legacy fallback)');
   }
 
   logger.info(`Scheduler starting (sleepSeconds=${sleepSeconds}, forceOnStartup=${forceOnStartup})`);
